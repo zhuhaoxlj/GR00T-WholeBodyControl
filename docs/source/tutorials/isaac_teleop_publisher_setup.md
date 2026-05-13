@@ -88,10 +88,13 @@ From the **repo root** on Thor:
 ```bash
 source .venv_teleop/bin/activate
 python gear_sonic/scripts/pico_manager_thread_server.py --manager \
-    --input-source isaac-teleop --vis_vr3pt --vis_smpl
+    --input-source isaac-teleop
+
+# If running offboard with a display, add visualization:
+#   --vis_vr3pt --vis_smpl
 ```
 
-Wait for the visualization window to pop up showing the Unitree G1 mesh at default angles, and watch the streamer logs for `Isaac Teleop session initialized.` — that means CloudXR + DeviceIO are both up.
+Watch the streamer logs for `Isaac Teleop session initialized.` — that means CloudXR + DeviceIO are both up. The streamer then prints `Manager controls: A+X=toggle mode, A+B+X+Y=start/stop policy` once the headset is connected and body data starts flowing.
 
 For the full sim and real-robot terminal layout (C++ deploy + streamer + optional MuJoCo sim), follow [VR Whole-Body Teleop](vr_wholebody_teleop.md). The Isaac Teleop alternative blocks in that doc use the same `--input-source isaac-teleop` invocation.
 

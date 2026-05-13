@@ -92,7 +92,10 @@ python gear_sonic/scripts/pico_manager_thread_server.py --manager \
 source .venv_teleop/bin/activate
 
 python gear_sonic/scripts/pico_manager_thread_server.py --manager \
-    --input-source isaac-teleop --vis_vr3pt --vis_smpl
+    --input-source isaac-teleop
+
+# If running offboard with a display, add visualization:
+#   --vis_vr3pt --vis_smpl
 ```
 
 When you turn on the visualization, wait for a window to pop up showing a Unitree G1 mesh with all joints at the default angles. If no window shows up on the default PICO path, double-check the PICO's XRoboToolKit IP configuration in the [VR Teleop Setup](../getting_started/vr_teleop_setup.md). If you are using Isaac Teleop instead, verify the headset is connected to the in-process CloudXR runtime — see [Isaac Teleop Setup](isaac_teleop_publisher_setup.md) for connection steps.
