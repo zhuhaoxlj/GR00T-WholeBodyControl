@@ -3,15 +3,15 @@
 ## 仿真
 终端1 开启仿真
 ```bash
-cd /home/mark/Project/01-RL/GR00T-WholeBodyControl
+cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
 source .venv_sim/bin/activate
 python gear_sonic/scripts/run_sim_loop.py
 ```
 
 终端2 启动 sonic 控制
 ```bash
-cd /home/mark/Project/01-RL/GR00T-WholeBodyControl/gear_sonic_deploy
-bash deploy.sh --input-type keyboard --motion-data reference/all sim
+cd /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy
+bash deploy.sh --input-type keyboard --motion-data reference/self sim
 ```
 
 ## 真机
