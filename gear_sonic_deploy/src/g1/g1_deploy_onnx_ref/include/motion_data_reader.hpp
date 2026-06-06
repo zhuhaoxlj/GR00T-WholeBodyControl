@@ -678,6 +678,8 @@ class MotionDataReader {
     /// @return True if at least one motion was loaded successfully.
     bool ReadFromCSV(const std::string& base_directory) {
       std::cout << "Reading motion data from CSV files in: " << base_directory << std::endl;
+      motions.clear();
+      current_motion_index_ = 0;
 
       // Auto-discover motion folders
       std::vector<std::string> motion_names;
@@ -697,206 +699,188 @@ class MotionDataReader {
       std::cout << "Found " << motion_names.size() << " motion folders" << std::endl;
 
       for (const auto& motion_name : motion_names) {
-        // Create motion as shared_ptr for proper ownership
-        auto motion = std::make_shared<MotionSequence>();
-
-        std::string motion_dir = base_directory + "/" + motion_name;
-
-        // Read metadata first (contains body part indexes!)
-        if (!ReadMetadata(motion_dir + "/metadata.txt", *motion)) {
-          std::cout << "⚠ Warning: Could not read metadata for " << motion_name << std::endl;
-        }
-
-        // Collect missing file warnings to decide later which ones to show
-        std::vector<std::string> missing_warnings;
-        
-        // Read joint data (optional)
-        int num_frames = 0;
-        int num_joints_pos = 0;
-        int num_joints_vel = 0;
-        
-        // Read joint positions (optional)
-        if (std::filesystem::exists(motion_dir + "/joint_pos.csv")) {
-          int pos_frames = ReadCSV(motion_dir + "/joint_pos.csv", motion->joint_positions_);
-          if (pos_frames > 0) {
-            if (num_frames == 0) {
-              num_frames = pos_frames;
-            } else if (num_frames != pos_frames) {
-              std::cout << "✗ Error: Frame count mismatch in joint_pos.csv for " << motion_name << " (expected " << num_frames << ", got " << pos_frames << ") - SKIPPING MOTION" << std::endl;
-              continue;
-            }
-            num_joints_pos = motion->joint_positions_.size() / pos_frames;
-          }
-        } else {
-          missing_warnings.push_back("joint_pos.csv");
-        }
-        
-        // Read joint velocities (optional)
-        if (std::filesystem::exists(motion_dir + "/joint_vel.csv")) {
-          int vel_frames = ReadCSV(motion_dir + "/joint_vel.csv", motion->joint_velocities_);
-          if (vel_frames > 0) {
-            if (num_frames == 0) {
-              num_frames = vel_frames;
-            } else if (num_frames != vel_frames) {
-              std::cout << "✗ Error: Frame count mismatch in joint_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << vel_frames << ") - SKIPPING MOTION" << std::endl;
-              continue;
-            }
-            num_joints_vel = motion->joint_velocities_.size() / vel_frames;
-          }
-        } else {
-          missing_warnings.push_back("joint_vel.csv");
-        }
-        
-        // Validate joint counts match if both are present
-        if (num_joints_pos > 0 && num_joints_vel > 0 && num_joints_pos != num_joints_vel) {
-          std::cout << "✗ Error: Number of joints inconsistent between joint_pos.csv (" << num_joints_pos << ") and joint_vel.csv (" << num_joints_vel << ") for " << motion_name << " - SKIPPING MOTION" << std::endl;
-          continue;
-        }
-        
-        // Use whichever joint count is available
-        int num_joints = (num_joints_pos > 0) ? num_joints_pos : num_joints_vel;
-
-        // Read body data (optional)
-        int num_bodies = 0;
-        int num_body_quaternions = 0;
-        
-        if (num_frames == 0 && std::filesystem::exists(motion_dir + "/body_pos.csv")) {
-          num_frames = ReadCSV3D<3>(motion_dir + "/body_pos.csv", motion->body_positions_);
-        } else if (std::filesystem::exists(motion_dir + "/body_pos.csv")) {
-          int body_frames = ReadCSV3D<3>(motion_dir + "/body_pos.csv", motion->body_positions_);
-          if (num_frames != body_frames) {
-            std::cout << "✗ Error: Frame count mismatch in body_pos.csv for " << motion_name << " (expected " << num_frames << ", got " << body_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-        } else {
-          missing_warnings.push_back("body_pos.csv");
-        }
-        
-        if (num_frames > 0 && !motion->body_positions_.empty()) {
-          num_bodies = motion->body_positions_.size() / num_frames;
-        }
-        
-        if (std::filesystem::exists(motion_dir + "/body_quat.csv")) {
-          int quat_frames = ReadCSV3D<4>(motion_dir + "/body_quat.csv", motion->body_quaternions_);
-          if (num_frames == 0) {
-            num_frames = quat_frames;
-          } else if (num_frames != quat_frames) {
-            std::cout << "✗ Error: Frame count mismatch in body_quat.csv for " << motion_name << " (expected " << num_frames << ", got " << quat_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-          if (num_frames > 0) {
-            num_body_quaternions = motion->body_quaternions_.size() / num_frames;
-          }
-        } else {
-          missing_warnings.push_back("body_quat.csv");
-        }
-        
-        // Read body velocities (optional, must match body_pos count)
-        if (std::filesystem::exists(motion_dir + "/body_lin_vel.csv")) {
-          int vel_frames = ReadCSV3D<3>(motion_dir + "/body_lin_vel.csv", motion->body_lin_velocities_);
-          if (num_frames != vel_frames) {
-            std::cout << "✗ Error: Frame count mismatch in body_lin_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << vel_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-          if (motion->body_lin_velocities_.size() != num_frames * num_bodies) {
-            std::cout << "✗ Error: Body count mismatch between body_pos.csv and body_lin_vel.csv for " << motion_name << " - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-        } else {
-          missing_warnings.push_back("body_lin_vel.csv");
-        }
-        
-        if (std::filesystem::exists(motion_dir + "/body_ang_vel.csv")) {
-          int ang_vel_frames = ReadCSV3D<3>(motion_dir + "/body_ang_vel.csv", motion->body_ang_velocities_);
-          if (num_frames != ang_vel_frames) {
-            std::cout << "✗ Error: Frame count mismatch in body_ang_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << ang_vel_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-          if (motion->body_ang_velocities_.size() != num_frames * num_bodies) {
-            std::cout << "✗ Error: Body count mismatch between body_pos.csv and body_ang_vel.csv for " << motion_name << " - SKIPPING MOTION" << std::endl;
-            continue;
-          }
-        } else {
-          missing_warnings.push_back("body_ang_vel.csv");
-        }
-        
-        // Read SMPL data (optional)
-        int num_smpl_joints = 0;
-        int num_smpl_poses = 0;
-        
-        if (std::filesystem::exists(motion_dir + "/smpl_joint.csv")) {
-          int smpl_frames = ReadCSV3D<3>(motion_dir + "/smpl_joint.csv", motion->smpl_joints_);
-          if (num_frames > 0 && num_frames != smpl_frames) {
-            std::cout << "✗ Error: Frame count mismatch in smpl_joint.csv for " << motion_name << " (expected " << num_frames << ", got " << smpl_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          } else if (num_frames == 0) {
-            num_frames = smpl_frames;
-          }
-          if (smpl_frames > 0) {
-            num_smpl_joints = motion->smpl_joints_.size() / smpl_frames;
-          }
-        } else {
-          missing_warnings.push_back("smpl_joint.csv");
-        }
-        
-        if (std::filesystem::exists(motion_dir + "/smpl_pose.csv")) {
-          int smpl_pose_frames = ReadCSV3D<3>(motion_dir + "/smpl_pose.csv", motion->smpl_poses_);
-          if (num_frames > 0 && num_frames != smpl_pose_frames) {
-            std::cout << "✗ Error: Frame count mismatch in smpl_pose.csv for " << motion_name << " (expected " << num_frames << ", got " << smpl_pose_frames << ") - SKIPPING MOTION" << std::endl;
-            continue;
-          } else if (num_frames == 0) {
-            num_frames = smpl_pose_frames;
-          }
-          if (smpl_pose_frames > 0) {
-            num_smpl_poses = motion->smpl_poses_.size() / smpl_pose_frames;
-          }
-        } else {
-          missing_warnings.push_back("smpl_pose.csv");
-        }
-        
-        // Must have at least some data to be valid
-        if (num_frames == 0) {
-          std::cout << "✗ Error: No valid data found for " << motion_name << " - SKIPPING MOTION" << std::endl;
-          continue;
-        }
-        
-        // Decide which missing file warnings to show based on what data we have
-        bool has_robot_data = (num_joints > 0 || num_bodies > 0 || num_body_quaternions > 0);
-        bool has_smpl_data = (num_smpl_joints > 0 || num_smpl_poses > 0);
-        
-        // Show relevant warnings only for the type of data we have
-        for (const auto& missing_file : missing_warnings) {
-          bool is_smpl_file = (missing_file == "smpl_joint.csv" || missing_file == "smpl_pose.csv");
-          bool is_robot_file = !is_smpl_file;
-          
-          // Show warning if it's relevant to the data type we have:
-          // - Robot file warning only if we have robot data
-          // - SMPL file warning only if we have SMPL data
-          bool should_warn = (is_robot_file && has_robot_data) || (is_smpl_file && has_smpl_data);
-          
-          if (should_warn) {
-            std::cout << "⚠ Warning: Missing " << missing_file << " for " << motion_name << std::endl;
-          }
-        }
-
-        motion->name = motion_name;
-        motion->timesteps = num_frames;
-        motion->num_joints = num_joints;
-        motion->num_bodies = num_bodies;
-        motion->num_body_quaternions = num_body_quaternions;
-        motion->num_smpl_joints = num_smpl_joints;
-        motion->num_smpl_poses = num_smpl_poses;
-
-        motion->positions_world_tmp.resize(num_joints + 1);
-        motion->rotations_world_tmp.resize(num_joints + 1);
-        motion->pos_filter_tmp.resize(num_frames);
-        motion->ang_filter_tmp.resize(num_frames);
-
-        std::cout << "✓ Loaded " << motion_name << " (" << motion->timesteps << " timesteps)" << std::endl;
-        motions.push_back(motion);
+        std::string motion_dir = (std::filesystem::path(base_directory) / motion_name).string();
+        ReadMotionDirectory(motion_dir, motion_name);
       }
 
       return !motions.empty();
+    }
+
+    /// Load one motion directory with the existing CSV bundle layout.
+    /// The optional name override lets a catalog expose stable external IDs.
+    bool ReadMotionDirectory(const std::string& motion_dir, const std::string& motion_name_override = "") {
+      std::filesystem::path motion_path(motion_dir);
+      std::string motion_name = motion_name_override.empty() ? motion_path.filename().string() : motion_name_override;
+      auto motion = std::make_shared<MotionSequence>();
+
+      if (!std::filesystem::is_directory(motion_path)) {
+        std::cout << "✗ Error: Motion path is not a directory for " << motion_name << ": " << motion_dir << std::endl;
+        return false;
+      }
+
+      // Read metadata first because observation code needs body-part indexes.
+      if (!ReadMetadata((motion_path / "metadata.txt").string(), *motion)) {
+        std::cout << "⚠ Warning: Could not read metadata for " << motion_name << std::endl;
+      }
+
+      std::vector<std::string> missing_warnings;
+      int num_frames = 0;
+      int num_joints_pos = 0;
+      int num_joints_vel = 0;
+
+      if (std::filesystem::exists(motion_path / "joint_pos.csv")) {
+        int pos_frames = ReadCSV((motion_path / "joint_pos.csv").string(), motion->joint_positions_);
+        if (pos_frames > 0) {
+          if (num_frames == 0) {
+            num_frames = pos_frames;
+          } else if (num_frames != pos_frames) {
+            std::cout << "✗ Error: Frame count mismatch in joint_pos.csv for " << motion_name << " (expected " << num_frames << ", got " << pos_frames << ") - SKIPPING MOTION" << std::endl;
+            return false;
+          }
+          num_joints_pos = motion->joint_positions_.size() / pos_frames;
+        }
+      } else {
+        missing_warnings.push_back("joint_pos.csv");
+      }
+
+      if (std::filesystem::exists(motion_path / "joint_vel.csv")) {
+        int vel_frames = ReadCSV((motion_path / "joint_vel.csv").string(), motion->joint_velocities_);
+        if (vel_frames > 0) {
+          if (num_frames == 0) {
+            num_frames = vel_frames;
+          } else if (num_frames != vel_frames) {
+            std::cout << "✗ Error: Frame count mismatch in joint_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << vel_frames << ") - SKIPPING MOTION" << std::endl;
+            return false;
+          }
+          num_joints_vel = motion->joint_velocities_.size() / vel_frames;
+        }
+      } else {
+        missing_warnings.push_back("joint_vel.csv");
+      }
+
+      if (num_joints_pos > 0 && num_joints_vel > 0 && num_joints_pos != num_joints_vel) {
+        std::cout << "✗ Error: Number of joints inconsistent between joint_pos.csv (" << num_joints_pos << ") and joint_vel.csv (" << num_joints_vel << ") for " << motion_name << " - SKIPPING MOTION" << std::endl;
+        return false;
+      }
+      int num_joints = (num_joints_pos > 0) ? num_joints_pos : num_joints_vel;
+
+      int num_bodies = 0;
+      int num_body_quaternions = 0;
+      if (num_frames == 0 && std::filesystem::exists(motion_path / "body_pos.csv")) {
+        num_frames = ReadCSV3D<3>((motion_path / "body_pos.csv").string(), motion->body_positions_);
+      } else if (std::filesystem::exists(motion_path / "body_pos.csv")) {
+        int body_frames = ReadCSV3D<3>((motion_path / "body_pos.csv").string(), motion->body_positions_);
+        if (num_frames != body_frames) {
+          std::cout << "✗ Error: Frame count mismatch in body_pos.csv for " << motion_name << " (expected " << num_frames << ", got " << body_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+      } else {
+        missing_warnings.push_back("body_pos.csv");
+      }
+
+      if (num_frames > 0 && !motion->body_positions_.empty()) {
+        num_bodies = motion->body_positions_.size() / num_frames;
+      }
+
+      if (std::filesystem::exists(motion_path / "body_quat.csv")) {
+        int quat_frames = ReadCSV3D<4>((motion_path / "body_quat.csv").string(), motion->body_quaternions_);
+        if (num_frames == 0) {
+          num_frames = quat_frames;
+        } else if (num_frames != quat_frames) {
+          std::cout << "✗ Error: Frame count mismatch in body_quat.csv for " << motion_name << " (expected " << num_frames << ", got " << quat_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+        if (num_frames > 0) {
+          num_body_quaternions = motion->body_quaternions_.size() / num_frames;
+        }
+      } else {
+        missing_warnings.push_back("body_quat.csv");
+      }
+
+      if (std::filesystem::exists(motion_path / "body_lin_vel.csv")) {
+        int vel_frames = ReadCSV3D<3>((motion_path / "body_lin_vel.csv").string(), motion->body_lin_velocities_);
+        if (num_frames != vel_frames) {
+          std::cout << "✗ Error: Frame count mismatch in body_lin_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << vel_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+        if (motion->body_lin_velocities_.size() != num_frames * num_bodies) {
+          std::cout << "✗ Error: Body count mismatch between body_pos.csv and body_lin_vel.csv for " << motion_name << " - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+      } else {
+        missing_warnings.push_back("body_lin_vel.csv");
+      }
+
+      if (std::filesystem::exists(motion_path / "body_ang_vel.csv")) {
+        int ang_vel_frames = ReadCSV3D<3>((motion_path / "body_ang_vel.csv").string(), motion->body_ang_velocities_);
+        if (num_frames != ang_vel_frames) {
+          std::cout << "✗ Error: Frame count mismatch in body_ang_vel.csv for " << motion_name << " (expected " << num_frames << ", got " << ang_vel_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+        if (motion->body_ang_velocities_.size() != num_frames * num_bodies) {
+          std::cout << "✗ Error: Body count mismatch between body_pos.csv and body_ang_vel.csv for " << motion_name << " - SKIPPING MOTION" << std::endl;
+          return false;
+        }
+      } else {
+        missing_warnings.push_back("body_ang_vel.csv");
+      }
+
+      int num_smpl_joints = 0;
+      int num_smpl_poses = 0;
+      if (std::filesystem::exists(motion_path / "smpl_joint.csv")) {
+        int smpl_frames = ReadCSV3D<3>((motion_path / "smpl_joint.csv").string(), motion->smpl_joints_);
+        if (num_frames > 0 && num_frames != smpl_frames) {
+          std::cout << "✗ Error: Frame count mismatch in smpl_joint.csv for " << motion_name << " (expected " << num_frames << ", got " << smpl_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        } else if (num_frames == 0) {
+          num_frames = smpl_frames;
+        }
+        if (smpl_frames > 0) { num_smpl_joints = motion->smpl_joints_.size() / smpl_frames; }
+      } else {
+        missing_warnings.push_back("smpl_joint.csv");
+      }
+
+      if (std::filesystem::exists(motion_path / "smpl_pose.csv")) {
+        int smpl_pose_frames = ReadCSV3D<3>((motion_path / "smpl_pose.csv").string(), motion->smpl_poses_);
+        if (num_frames > 0 && num_frames != smpl_pose_frames) {
+          std::cout << "✗ Error: Frame count mismatch in smpl_pose.csv for " << motion_name << " (expected " << num_frames << ", got " << smpl_pose_frames << ") - SKIPPING MOTION" << std::endl;
+          return false;
+        } else if (num_frames == 0) {
+          num_frames = smpl_pose_frames;
+        }
+        if (smpl_pose_frames > 0) { num_smpl_poses = motion->smpl_poses_.size() / smpl_pose_frames; }
+      } else {
+        missing_warnings.push_back("smpl_pose.csv");
+      }
+
+      if (num_frames == 0) {
+        std::cout << "✗ Error: No valid data found for " << motion_name << " - SKIPPING MOTION" << std::endl;
+        return false;
+      }
+
+      bool has_robot_data = (num_joints > 0 || num_bodies > 0 || num_body_quaternions > 0);
+      bool has_smpl_data = (num_smpl_joints > 0 || num_smpl_poses > 0);
+      for (const auto& missing_file : missing_warnings) {
+        bool is_smpl_file = (missing_file == "smpl_joint.csv" || missing_file == "smpl_pose.csv");
+        bool should_warn = (!is_smpl_file && has_robot_data) || (is_smpl_file && has_smpl_data);
+        if (should_warn) { std::cout << "⚠ Warning: Missing " << missing_file << " for " << motion_name << std::endl; }
+      }
+
+      motion->name = motion_name;
+      motion->timesteps = num_frames;
+      motion->num_joints = num_joints;
+      motion->num_bodies = num_bodies;
+      motion->num_body_quaternions = num_body_quaternions;
+      motion->num_smpl_joints = num_smpl_joints;
+      motion->num_smpl_poses = num_smpl_poses;
+      motion->positions_world_tmp.resize(num_joints + 1);
+      motion->rotations_world_tmp.resize(num_joints + 1);
+      motion->pos_filter_tmp.resize(num_frames);
+      motion->ang_filter_tmp.resize(num_frames);
+
+      std::cout << "✓ Loaded " << motion_name << " (" << motion->timesteps << " timesteps) from " << motion_dir << std::endl;
+      motions.push_back(motion);
+      return true;
     }
 
     void PrintSummary() const {
