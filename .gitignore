@@ -2,9 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+.project/
 # C extensions
-
+qt_dance_data/
 
 # Distribution / packaging
 .Python
@@ -219,3 +219,12 @@ models/
 # Downloaded from HuggingFace (hf download)
 sample_data/
 sonic_release/
+
+# Local motion conversion outputs
+gear_sonic_deploy/reference/all/
+gear_sonic_deploy/reference/self/qt_take_017/
+gear_sonic_deploy/reference/self/qt_take_017_smooth/
+gear_sonic_deploy/reference/self/qt_take_017_catalog.yaml
+
+# Local deploy visualization/simulation meshes
+gear_sonic_deploy/g1/meshes/*_rev_1_0.STL

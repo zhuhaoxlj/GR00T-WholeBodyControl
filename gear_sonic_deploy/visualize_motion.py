@@ -95,7 +95,45 @@ def load_anim_data(csv_path: str):
         with open(csv_path, mode="r", newline="") as file:
 
             csv_reader = csv.reader(file)
-            for row in csv_reader:
+            first_row = next(csv_reader, None)
+            if first_row and first_row[0] == "Frame" and "root_rotateX" in first_row:
+                header = first_row
+                col = {name: i for i, name in enumerate(header)}
+                joint_cols = [i for i, name in enumerate(header) if name.endswith("_dof")]
+                root_pos = []
+                root_quat = []
+                dof = []
+                for row in csv_reader:
+                    if not row:
+                        continue
+                    root_pos.append([
+                        float(row[col["root_translateX"]]) / 100.0,
+                        float(row[col["root_translateY"]]) / 100.0,
+                        float(row[col["root_translateZ"]]) / 100.0,
+                    ])
+                    euler_deg = [
+                        float(row[col["root_rotateX"]]),
+                        float(row[col["root_rotateY"]]),
+                        float(row[col["root_rotateZ"]]),
+                    ]
+                    quat_xyzw = R.from_euler("xyz", euler_deg, degrees=True).as_quat()
+                    root_quat.append(quat_xyzw[[3, 0, 1, 2]])  # MuJoCo wxyz
+                    dof.append([np.deg2rad(float(row[i])) for i in joint_cols])
+
+                ret.append({
+                    "dof": np.array(dof, dtype=np.float64),
+                    "root_rot": np.array(root_quat, dtype=np.float64),
+                    "root_trans_offset": np.array(root_pos, dtype=np.float64),
+                })
+                return ret
+
+            if first_row:
+                rows = [first_row]
+            else:
+                rows = []
+            rows.extend(csv_reader)
+
+            for row in rows:
                 if len(row):
                     r = [x for x in row if x]
                     assert len(r) == 36
@@ -156,8 +194,10 @@ def main(args) -> None:
         frame_idx, \
         anim_idx
         
-    fps = 50
+    fps = args.fps
     curr_start, num_motions, motion_id, motion_acc, time_step, dt, paused, frame_idx, anim_idx = 0, 1, 0, set(), 0, 1 / fps, False, int(0), 0
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
     def prepend_names(elem, prefix):
         # If element has a 'name' attribute, prepend the prefix
@@ -175,8 +215,11 @@ def main(args) -> None:
         for child in elem:
             replace_attribute(child, attribute, value)
 
-    main_scene = etree.parse('g1/scene_empty.xml')
-    robot1 = etree.parse('g1/g1_29dof_old.xml')
+    scene_path = os.path.join(script_dir, "g1", "scene_empty.xml")
+    robot_xml_path = os.path.join(script_dir, "g1", "g1_29dof_old.xml")
+
+    main_scene = etree.parse(scene_path)
+    robot1 = etree.parse(robot_xml_path)
     robot_asset = robot1.find('asset')
     scene_asset = main_scene.find('asset')
     for mesh in robot_asset.findall('mesh'):
@@ -194,14 +237,14 @@ def main(args) -> None:
     prepend_names(robot1_body, "robot1_")
     scene_worldbody.append(robot1_body)
 
-    robot2 = etree.parse('g1/g1_29dof_old.xml')
+    robot2 = etree.parse(robot_xml_path)
     robot2_body = robot2.find('worldbody').find('body')
     prepend_names(robot2_body, "robot2_")
     replace_attribute(robot2_body, "rgba", "0.5 0.1 0.1 1")
     robot2_body.set("pos", "0 -1 -10")
     scene_worldbody.append(robot2_body)
 
-    robot3 = etree.parse('g1/g1_29dof_old.xml')
+    robot3 = etree.parse(robot_xml_path)
     robot3_body = robot3.find('worldbody').find('body')
     prepend_names(robot3_body, "robot3_")
     replace_attribute(robot3_body, "rgba", "0.1 0.5 0.1 0.2")
@@ -209,7 +252,7 @@ def main(args) -> None:
     scene_worldbody.append(robot3_body)
 
     # Robot 4: temperature visualization robot (white transparent, offset 3m to the right)
-    robot4 = etree.parse('g1/g1_29dof_old.xml')
+    robot4 = etree.parse(robot_xml_path)
     robot4_body = robot4.find('worldbody').find('body')
     prepend_names(robot4_body, "robot4_")
     replace_attribute(robot4_body, "rgba", "0.8 0.8 0.8 0.1")
@@ -426,6 +469,12 @@ if __name__ == "__main__":
         type=str,
         default="g1_debug",
         help="Topic to receive realtime debug messages from",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=50.0,
+        help="Playback FPS. Use 120 for QT retargeting CSV; deploy reference directories are 50 FPS.",
     )
     args = parser.parse_args()
 

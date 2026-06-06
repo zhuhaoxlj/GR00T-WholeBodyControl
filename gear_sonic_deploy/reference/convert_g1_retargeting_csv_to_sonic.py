@@ -24,7 +24,8 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.spatial.transform import Rotation
 
 
-FPS_DEFAULT = 50
+SOURCE_FPS_DEFAULT = 120
+OUTPUT_FPS_DEFAULT = 50
 
 BODY_INDEXES = np.array([0, 4, 10, 18, 5, 11, 19, 9, 16, 22, 28, 17, 23, 29], dtype=np.int64)
 
@@ -321,6 +322,72 @@ def load_flat_csv(csv_path: Path, start_frame: int, end_frame: int | None) -> tu
     return root_pos_m, root_quat_wxyz, joint_pos_isaaclab
 
 
+def resample_motion(
+    root_pos: np.ndarray,
+    root_quat_wxyz: np.ndarray,
+    joint_pos_isaaclab: np.ndarray,
+    source_fps: float,
+    output_fps: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if source_fps <= 0 or output_fps <= 0:
+        raise ValueError("source_fps and output_fps must be positive")
+    if np.isclose(source_fps, output_fps):
+        return root_pos, root_quat_wxyz, joint_pos_isaaclab
+
+    src_times = np.arange(root_pos.shape[0], dtype=np.float64) / source_fps
+    duration = src_times[-1]
+    dst_times = np.arange(0.0, duration + 1e-9, 1.0 / output_fps, dtype=np.float64)
+
+    root_pos_out = np.empty((len(dst_times), 3), dtype=np.float64)
+    for axis in range(3):
+        root_pos_out[:, axis] = np.interp(dst_times, src_times, root_pos[:, axis])
+
+    joint_out = np.empty((len(dst_times), joint_pos_isaaclab.shape[1]), dtype=np.float64)
+    joint_unwrapped = np.unwrap(joint_pos_isaaclab, axis=0)
+    for joint in range(joint_unwrapped.shape[1]):
+        joint_out[:, joint] = np.interp(dst_times, src_times, joint_unwrapped[:, joint])
+
+    root_quat_xyzw = root_quat_wxyz[:, [1, 2, 3, 0]]
+    root_rot_out_xyzw = Rotation.from_quat(root_quat_xyzw).as_quat()
+    try:
+        from scipy.spatial.transform import Slerp
+
+        slerp = Slerp(src_times, Rotation.from_quat(root_quat_xyzw))
+        root_rot_out_xyzw = slerp(dst_times).as_quat()
+    except Exception:
+        # Linear quaternion interpolation is only a fallback for old scipy builds.
+        quat_out = np.empty((len(dst_times), 4), dtype=np.float64)
+        for axis in range(4):
+            quat_out[:, axis] = np.interp(dst_times, src_times, root_quat_xyzw[:, axis])
+        quat_out /= np.linalg.norm(quat_out, axis=1, keepdims=True)
+        root_rot_out_xyzw = quat_out
+    root_quat_out_wxyz = root_rot_out_xyzw[:, [3, 0, 1, 2]]
+    return root_pos_out, root_quat_out_wxyz, joint_out
+
+
+def smooth_motion(
+    root_pos: np.ndarray,
+    root_quat_wxyz: np.ndarray,
+    joint_pos_isaaclab: np.ndarray,
+    sigma: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if sigma <= 0:
+        return root_pos, root_quat_wxyz, joint_pos_isaaclab
+
+    root_pos_smooth = gaussian_filter1d(root_pos, sigma=sigma, axis=0, mode="nearest")
+    joint_smooth = gaussian_filter1d(np.unwrap(joint_pos_isaaclab, axis=0), sigma=sigma, axis=0, mode="nearest")
+
+    # Smooth root orientation in rotation-vector space around the first frame.
+    root_xyzw = root_quat_wxyz[:, [1, 2, 3, 0]]
+    first = Rotation.from_quat(root_xyzw[0])
+    rel_rotvec = (first.inv() * Rotation.from_quat(root_xyzw)).as_rotvec()
+    rel_rotvec = np.unwrap(rel_rotvec, axis=0)
+    rel_rotvec_smooth = gaussian_filter1d(rel_rotvec, sigma=sigma, axis=0, mode="nearest")
+    root_smooth_xyzw = (first * Rotation.from_rotvec(rel_rotvec_smooth)).as_quat()
+    root_quat_smooth = root_smooth_xyzw[:, [3, 0, 1, 2]]
+    return root_pos_smooth, root_quat_smooth, joint_smooth
+
+
 def enforce_quat_continuity(quats: np.ndarray) -> np.ndarray:
     out = quats.copy()
     flat = out.reshape(out.shape[0], -1, 4)
@@ -434,11 +501,15 @@ def convert(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     root_pos, root_quat, joint_pos = load_flat_csv(input_csv, args.start_frame, args.end_frame)
+    root_pos, root_quat, joint_pos = resample_motion(
+        root_pos, root_quat, joint_pos, args.source_fps, args.output_fps
+    )
+    root_pos, root_quat, joint_pos = smooth_motion(root_pos, root_quat, joint_pos, args.smooth_sigma)
     fk = G1FK(xml_path)
     body_pos, body_quat, body_lin_vel, body_ang_vel = compute_body_kinematics(
-        fk, root_pos, root_quat, joint_pos, args.fps
+        fk, root_pos, root_quat, joint_pos, args.output_fps
     )
-    joint_vel = compute_joint_velocity(joint_pos, args.fps)
+    joint_vel = compute_joint_velocity(joint_pos, args.output_fps)
 
     arrays = {
         "joint_pos": joint_pos.astype(np.float32),
@@ -472,9 +543,20 @@ def convert(args: argparse.Namespace) -> None:
         [f"body_{i}_angvel_{axis}" for i in range(14) for axis in "xyz"],
     )
     write_metadata(output_dir / "metadata.txt", args.motion_name, len(joint_pos))
-    write_info(output_dir / "info.txt", args.motion_name, arrays, input_csv, args.fps, args.start_frame, args.end_frame)
+    write_info(
+        output_dir / "info.txt",
+        args.motion_name,
+        arrays,
+        input_csv,
+        args.output_fps,
+        args.start_frame,
+        args.end_frame,
+    )
 
     print(f"Converted {len(joint_pos)} frames")
+    print(f"Source/output FPS: {args.source_fps:g} -> {args.output_fps:g}")
+    if args.smooth_sigma > 0:
+        print(f"Applied Gaussian smoothing sigma: {args.smooth_sigma:g} output frames")
     print(f"Wrote Sonic reference motion: {output_dir}")
     print("Files: joint_pos.csv, joint_vel.csv, body_pos.csv, body_quat.csv, body_lin_vel.csv, body_ang_vel.csv")
 
@@ -499,13 +581,31 @@ def parse_args() -> argparse.Namespace:
         help="G1 MuJoCo XML used for FK",
     )
     parser.add_argument("--motion-name", default="qt_take_017", help="Motion name written to metadata/info")
-    parser.add_argument("--fps", type=int, default=FPS_DEFAULT, help="Motion frame rate")
+    parser.add_argument(
+        "--source-fps",
+        type=float,
+        default=SOURCE_FPS_DEFAULT,
+        help="Input CSV frame rate. QT BVH Frame Time 0.00833333 means 120 Hz.",
+    )
+    parser.add_argument(
+        "--output-fps",
+        "--fps",
+        type=float,
+        default=OUTPUT_FPS_DEFAULT,
+        help="Output playback frame rate. Sonic deploy advances one frame per 50 Hz control tick.",
+    )
     parser.add_argument("--start-frame", type=int, default=0, help="Inclusive Python slice start frame")
     parser.add_argument(
         "--end-frame",
         type=int,
         default=None,
         help="Exclusive Python slice end frame. Use -1 to drop the last frame.",
+    )
+    parser.add_argument(
+        "--smooth-sigma",
+        type=float,
+        default=0.0,
+        help="Gaussian smoothing sigma in output frames. Try 1.0-2.0 for policy-tracked playback.",
     )
     return parser.parse_args()
 
