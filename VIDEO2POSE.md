@@ -62,3 +62,16 @@ python gear_sonic_deploy/visualize_motion.py \
 --motion_dir gear_sonic_deploy/reference/self/qt_take_017_smooth \
 --fps 50
 ```
+
+
+
+# 机器人状态管理
+开机自启动，sonic启动 Init Done 之后机器人状态为 WAIT_FOR_CONTROL，此时电机使能 + 默认站姿 PD hold + 等待 Start 命令
+
+按下 Start 机器人直接从 Init Done （要人扶）的状态变成站起来了（不用人扶）,可以直接下发群控命令下蹲
+
+把机器人扶起来站立，然后按下 Start 启动 policy 控制系统，默认进入 motion_catalog.example.yaml配置的第一个动作的第 0 帧
+
+
+
+select 进入阻尼

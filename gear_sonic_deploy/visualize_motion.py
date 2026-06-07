@@ -195,7 +195,17 @@ def main(args) -> None:
         anim_idx
         
     fps = args.fps
-    curr_start, num_motions, motion_id, motion_acc, time_step, dt, paused, frame_idx, anim_idx = 0, 1, 0, set(), 0, 1 / fps, False, int(0), 0
+    curr_start, num_motions, motion_id, motion_acc, time_step, dt, paused, frame_idx, anim_idx = (
+        0,
+        1,
+        0,
+        set(),
+        0,
+        1 / fps,
+        args.paused,
+        int(args.start_frame),
+        0,
+    )
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -475,6 +485,18 @@ if __name__ == "__main__":
         type=float,
         default=50.0,
         help="Playback FPS. Use 120 for QT retargeting CSV; deploy reference directories are 50 FPS.",
+    )
+    parser.add_argument(
+        "--start-frame",
+        "--frame",
+        type=int,
+        default=0,
+        help="Frame index to show first.",
+    )
+    parser.add_argument(
+        "--paused",
+        action="store_true",
+        help="Start paused so a single frame can be inspected.",
     )
     args = parser.parse_args()
 
