@@ -36,3 +36,29 @@ yes | bash ~/GR00T-WholeBodyControl/gear_sonic_deploy/deploy.sh real --input-typ
 ```bash
 ros2 topic pub --once /WBCPolicy/select_motion std_msgs/msg/String "{data: 'squat'}"
 ```
+
+
+
+# 转换青铜舞蹈数据
+默认版本不带平滑
+```bash
+python3 gear_sonic_deploy/reference/convert_g1_retargeting_csv_to_sonic.py
+```
+
+生成平滑版本
+```bash
+python3 gear_sonic_deploy/reference/convert_g1_retargeting_csv_to_sonic.py \
+--output-dir gear_sonic_deploy/reference/self/qt_take_017_smooth \
+--motion-name qt_take_017_smooth \
+--smooth-sigma 1.5
+```
+
+离线动作查看器（不包含电机和sonic控制器）
+```bash
+cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
+source .venv_sim/bin/activate
+
+python gear_sonic_deploy/visualize_motion.py \
+--motion_dir gear_sonic_deploy/reference/self/qt_take_017_smooth \
+--fps 50
+```

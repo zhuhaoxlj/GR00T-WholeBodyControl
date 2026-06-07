@@ -222,9 +222,9 @@ def main(args) -> None:
     robot1 = etree.parse(robot_xml_path)
     robot_asset = robot1.find('asset')
     scene_asset = main_scene.find('asset')
+    mesh_dir = os.path.join(script_dir, "g1", "meshes")
     for mesh in robot_asset.findall('mesh'):
-        # INSERT_YOUR_CODE
-        mesh.set("file", os.path.join("g1","meshes", mesh.get('file')))
+        mesh.set("file", os.path.join(mesh_dir, mesh.get('file')))
         scene_asset.append(mesh)
     
     robot_default = robot1.find('default')

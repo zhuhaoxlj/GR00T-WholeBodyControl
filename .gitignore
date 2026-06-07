@@ -5,6 +5,7 @@ __pycache__/
 .project/
 # C extensions
 qt_dance_data/
+gear_sonic_deploy/reference/self/qtsmooth
 
 # Distribution / packaging
 .Python
