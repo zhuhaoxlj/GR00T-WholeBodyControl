@@ -229,3 +229,4 @@ gear_sonic_deploy/reference/self/qt_take_017_catalog.yaml
 
 # Local deploy visualization/simulation meshes
 gear_sonic_deploy/g1/meshes/*_rev_1_0.STL
+gear_sonic_deploy/reference/
