@@ -6,6 +6,7 @@ BaseSimulator wraps DefaultEnv with rate-limiting and viewer/image update loops.
 """
 
 import os
+from collections import deque
 import pathlib
 from pathlib import Path
 import pickle
@@ -63,6 +64,35 @@ class DefaultEnv:
 
         self.init_scene()
         self.last_reward = 0
+        self.foot_trajectory_enabled = self.config.get("ENABLE_FOOT_TRAJECTORY", True)
+        self.foot_trajectory_sample_stride = self.config.get("FOOT_TRAJECTORY_SAMPLE_STRIDE", 4)
+        self.foot_trajectory_ground_threshold = self.config.get(
+            "FOOT_TRAJECTORY_GROUND_THRESHOLD", 0.025
+        )
+        self.foot_trajectory_min_distance = self.config.get("FOOT_TRAJECTORY_MIN_DISTANCE", 0.01)
+        self.foot_trajectory_z_offset = self.config.get("FOOT_TRAJECTORY_Z_OFFSET", 0.012)
+        self.foot_trajectory_counter = 0
+        self.foot_trajectory = {
+            "left": deque(maxlen=self.config.get("FOOT_TRAJECTORY_MAX_POINTS", 600)),
+            "right": deque(maxlen=self.config.get("FOOT_TRAJECTORY_MAX_POINTS", 600)),
+        }
+        self.foot_body_ids = {
+            "left": mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link"
+            ),
+            "right": mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "right_ankle_roll_link"
+            ),
+        }
+        self.foot_local_contact_points = np.array(
+            [
+                [-0.05, 0.025, -0.03],
+                [-0.05, -0.025, -0.03],
+                [0.12, 0.03, -0.03],
+                [0.12, -0.03, -0.03],
+            ],
+            dtype=np.float64,
+        )
 
         self.offscreen = offscreen
         if self.offscreen:
@@ -153,6 +183,7 @@ class DefaultEnv:
         self.torso_index = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
         self.root_body = "pelvis"
         self.root_body_id = self.mj_model.body(self.root_body).id
+        self.elastic_band = None
 
         self.joint_class_map = self._get_dof_indices_by_class()
 
@@ -198,7 +229,7 @@ class DefaultEnv:
                 self.viewer = mujoco.viewer.launch_passive(
                     self.mj_model,
                     self.mj_data,
-                    key_callback=self.elastic_band.MujuocoKeyCallback,
+                    key_callback=self._handle_viewer_key_callback,
                     show_left_ui=False,
                     show_right_ui=False,
                 )
@@ -208,7 +239,11 @@ class DefaultEnv:
         else:
             if self.onscreen:
                 self.viewer = mujoco.viewer.launch_passive(
-                    self.mj_model, self.mj_data, show_left_ui=False, show_right_ui=False
+                    self.mj_model,
+                    self.mj_data,
+                    key_callback=self._handle_viewer_key_callback,
+                    show_left_ui=False,
+                    show_right_ui=False,
                 )
             else:
                 mujoco.mj_forward(self.mj_model, self.mj_data)
@@ -246,6 +281,12 @@ class DefaultEnv:
         self.body_joint_index = np.array(self.body_joint_index)
         self.left_hand_index = np.array(self.left_hand_index)
         self.right_hand_index = np.array(self.right_hand_index)
+
+    def _handle_viewer_key_callback(self, key):
+        if self.elastic_band:
+            self.elastic_band.MujuocoKeyCallback(key)
+        if key == ord("R") and hasattr(self, "foot_trajectory"):
+            self.clear_foot_trajectory()
 
     def init_renderers(self):
         self.renderers = {}
@@ -428,8 +469,79 @@ class DefaultEnv:
         else:
             self.mj_data.ctrl = self.torques
         mujoco.mj_step(self.mj_model, self.mj_data)
+        self.update_foot_trajectory()
 
         self.check_fall()
+
+    def get_foot_contact_position(self, side: str):
+        body_id = self.foot_body_ids[side]
+        if body_id < 0:
+            return None
+
+        body_pos = self.mj_data.xpos[body_id]
+        body_rot = self.mj_data.xmat[body_id].reshape(3, 3)
+        foot_points = body_pos + self.foot_local_contact_points @ body_rot.T
+        near_ground_points = foot_points[
+            foot_points[:, 2] <= self.foot_trajectory_ground_threshold
+        ]
+        if len(near_ground_points) == 0:
+            return None
+
+        contact_pos = near_ground_points.mean(axis=0)
+        contact_pos[2] = self.foot_trajectory_z_offset
+        return contact_pos
+
+    def update_foot_trajectory(self):
+        if not self.foot_trajectory_enabled:
+            return
+
+        self.foot_trajectory_counter += 1
+        if self.foot_trajectory_counter % self.foot_trajectory_sample_stride != 0:
+            return
+
+        for side in ("left", "right"):
+            contact_pos = self.get_foot_contact_position(side)
+            if contact_pos is None:
+                continue
+
+            trajectory = self.foot_trajectory[side]
+            if (
+                len(trajectory) == 0
+                or np.linalg.norm(contact_pos[:2] - trajectory[-1][:2])
+                >= self.foot_trajectory_min_distance
+            ):
+                trajectory.append(contact_pos.copy())
+
+    def draw_foot_trajectory(self):
+        if not self.foot_trajectory_enabled or self.viewer is None:
+            return
+
+        colors = {
+            "left": np.array([0.1, 0.8, 1.0, 0.85], dtype=np.float32),
+            "right": np.array([1.0, 0.45, 0.1, 0.85], dtype=np.float32),
+        }
+        for side, trajectory in self.foot_trajectory.items():
+            for point_index, point in enumerate(trajectory):
+                geom_index = self.viewer.user_scn.ngeom
+                if geom_index >= self.viewer.user_scn.maxgeom:
+                    return
+
+                color = colors[side].copy()
+                color[3] = 0.25 + 0.6 * (point_index + 1) / max(1, len(trajectory))
+                mujoco.mjv_initGeom(
+                    self.viewer.user_scn.geoms[geom_index],
+                    type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                    size=np.array([0.018, 0.0, 0.0], dtype=np.float64),
+                    pos=point,
+                    mat=np.eye(3, dtype=np.float64).flatten(),
+                    rgba=color,
+                )
+                self.viewer.user_scn.ngeom += 1
+
+    def clear_foot_trajectory(self):
+        for trajectory in self.foot_trajectory.values():
+            trajectory.clear()
+        self.foot_trajectory_counter = 0
 
     def apply_perturbation(self, key):
         perturbation_x_body = 0.0
@@ -454,6 +566,8 @@ class DefaultEnv:
 
     def update_viewer(self):
         if self.viewer is not None:
+            self.viewer.user_scn.ngeom = 0
+            self.draw_foot_trajectory()
             self.viewer.sync()
 
     def update_viewer_camera(self):
@@ -500,6 +614,8 @@ class DefaultEnv:
 
         if key == "backspace":
             self.reset()
+        if key == "r":
+            self.clear_foot_trajectory()
         if key == "v":
             self.update_viewer_camera()
         if key in ["up", "down", "left", "right"]:
@@ -525,6 +641,7 @@ class DefaultEnv:
 
     def reset(self):
         mujoco.mj_resetData(self.mj_model, self.mj_data)
+        self.clear_foot_trajectory()
 
 
 class BaseSimulator:
