@@ -38,7 +38,7 @@
  *   L2      | LEFT_HOOK
  *   R2      | RIGHT_HOOK
  *
- *   L stick | Movement direction (binned to nearest 30° increment)
+ *   L stick | Forward/backward motion; left/right turns first, then moves forward
  *   R stick | Facing direction (continuous)
  */
 
@@ -757,14 +757,32 @@ class GamepadManager : public InputInterface {
       }
 
       if (std::abs(lx_) > dead_zone_ || std::abs(ly_) > dead_zone_) {
-        double raw_angle = atan2(ly_, lx_);
-        double bin_size = M_PI / 4.0;  // 8 directions (45° bins)
-        double binned_angle = std::round(raw_angle / bin_size) * bin_size;
-        planner_moving_direction_ = binned_angle - M_PI / 2 + planner_facing_angle_;
+        const bool horizontal_input = std::abs(lx_) > dead_zone_ && std::abs(lx_) >= std::abs(ly_);
+        if (horizontal_input) {
+          const int requested_side = lx_ < 0.0f ? 1 : -1;
+          left_stick_forward_scale_ = std::min(1.0f, std::abs(lx_));
+
+          if (left_stick_turn_side_ != requested_side) {
+            left_stick_turn_side_ = requested_side;
+            left_stick_turn_active_ = true;
+            left_stick_turn_start_angle_ = planner_facing_angle_;
+            left_stick_turn_target_angle_ = planner_facing_angle_ + requested_side * M_PI / 2.0;
+            left_stick_turn_start_time_ = std::chrono::steady_clock::now();
+          }
+          planner_moving_direction_ = planner_facing_angle_;
+        } else {
+          left_stick_turn_active_ = false;
+          left_stick_turn_side_ = 0;
+          left_stick_forward_scale_ = 0.0f;
+          planner_moving_direction_ = planner_facing_angle_;
+          if (ly_ < -dead_zone_) {
+            planner_moving_direction_ += M_PI;
+          }
+        }
         if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GamepadManager DEBUG] Left stick - Raw: " << raw_angle
-                    << ", Binned: " << binned_angle
-                    << ", Moving: " << planner_moving_direction_ << " rad" << std::endl;
+          std::cout << "[GamepadManager DEBUG] Left stick - Turn-first moving: "
+                    << planner_moving_direction_ << " rad, facing: "
+                    << planner_facing_angle_ << " rad" << std::endl;
         }
       }
     }
@@ -918,8 +936,13 @@ class GamepadManager : public InputInterface {
         double final_speed = planner_use_movement_speed_;
         double final_height = planner_use_height_;
 
+        const bool horizontal_left_stick_held = left_stick_turn_side_ != 0 && std::abs(lx_) > dead_zone_;
+
         // If left sticks in dead zone — idle logic depends on motion set
         if (std::abs(lx_) < dead_zone_ && std::abs(ly_) < dead_zone_) {
+          left_stick_turn_active_ = false;
+          left_stick_turn_side_ = 0;
+          left_stick_forward_scale_ = 0.0f;
           if (motion_set_index_ == 0) {
             // Standing set → go to IDLE
             final_mode = static_cast<int>(LocomotionMode::IDLE);
@@ -979,6 +1002,41 @@ class GamepadManager : public InputInterface {
           final_movement = {0.0f, 0.0f, 0.0f};
           final_speed = 0.0f;
           final_height = planner_use_height_;
+        }
+
+        if (horizontal_left_stick_held &&
+            planner_use_movement_mode_ != static_cast<int>(LocomotionMode::IDEL_KNEEL_TWO_LEGS) &&
+            planner_use_movement_mode_ != static_cast<int>(LocomotionMode::IDEL_KNEEL) &&
+            planner_use_movement_mode_ != static_cast<int>(LocomotionMode::IDEL_SQUAT)) {
+          if (left_stick_turn_active_) {
+            auto elapsed = std::chrono::steady_clock::now() - left_stick_turn_start_time_;
+            if (elapsed < left_stick_turn_stop_duration_) {
+              planner_facing_angle_ = left_stick_turn_start_angle_;
+              final_movement = {0.0f, 0.0f, 0.0f};
+              final_speed = 0.0f;
+            } else if (elapsed < left_stick_turn_stop_duration_ + left_stick_turn_duration_) {
+              auto turn_elapsed = elapsed - left_stick_turn_stop_duration_;
+              double alpha = static_cast<double>(turn_elapsed.count()) /
+                             static_cast<double>(left_stick_turn_duration_.count());
+              planner_facing_angle_ = left_stick_turn_start_angle_ +
+                                      (left_stick_turn_target_angle_ - left_stick_turn_start_angle_) * alpha;
+              final_movement = {0.0f, 0.0f, 0.0f};
+              final_speed = 0.0f;
+            } else {
+              planner_facing_angle_ = left_stick_turn_target_angle_;
+              left_stick_turn_active_ = false;
+            }
+          }
+
+          final_facing_direction = {double(cos(planner_facing_angle_)),
+                                    double(sin(planner_facing_angle_)), 0.0};
+          if (!left_stick_turn_active_) {
+            final_mode = planner_use_movement_mode_;
+            final_movement = final_facing_direction;
+            double base_speed = planner_use_movement_speed_ > 0.0 ? planner_use_movement_speed_ : 1.0;
+            final_speed = base_speed * left_stick_forward_scale_;
+            final_height = planner_use_height_;
+          }
         }
 
         MovementState mode_state(final_mode, final_movement, final_facing_direction, final_speed, final_height);
@@ -1056,6 +1114,15 @@ class GamepadManager : public InputInterface {
     double planner_facing_angle_ = 0.0;           ///< Accumulated facing direction (radians).
     double planner_moving_direction_ = 0.0;       ///< Current movement direction (radians).
 
+    bool left_stick_turn_active_ = false;
+    int left_stick_turn_side_ = 0;
+    float left_stick_forward_scale_ = 0.0f;
+    double left_stick_turn_start_angle_ = 0.0;
+    double left_stick_turn_target_angle_ = 0.0;
+    std::chrono::steady_clock::time_point left_stick_turn_start_time_{};
+    const std::chrono::milliseconds left_stick_turn_stop_duration_{700};
+    const std::chrono::milliseconds left_stick_turn_duration_{1200};
+
     // ------------------------------------------------------------------
     // Staged crawling transition state
     // ------------------------------------------------------------------
@@ -1074,5 +1141,3 @@ class GamepadManager : public InputInterface {
 };
 
 #endif // GAMEPAD_MANAGER_HPP
-
-
