@@ -55,7 +55,9 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <string>
 #include "input_interface.hpp"
+#include "../foot_trajectory_event.hpp"
 
 /**
  * @class SimpleKeyboard
@@ -414,14 +416,22 @@ class SimpleKeyboard : public InputInterface {
 
       if (this->play_motion) {
           if (!operator_state.play) {
+              std::string motion_name;
               int frame_copy;
               size_t timesteps_copy;
               {
                 std::lock_guard<std::mutex> lock(current_motion_mutex);
                 operator_state.play = true;
+                motion_name = current_motion ? current_motion->name : "unknown_motion";
                 frame_copy = current_frame;
                 timesteps_copy = current_motion ? current_motion->timesteps : 0;
               }
+              FootTrajectoryEvent::WriteEvent(
+                  "start",
+                  motion_name,
+                  motion_reader.current_motion_index_,
+                  frame_copy,
+                  static_cast<int>(timesteps_copy));
               std::cout << "Playing motion " << motion_reader.current_motion_index_ << " from frame " << frame_copy << " to end ("
                         << timesteps_copy << " total frames)" << std::endl;
           }

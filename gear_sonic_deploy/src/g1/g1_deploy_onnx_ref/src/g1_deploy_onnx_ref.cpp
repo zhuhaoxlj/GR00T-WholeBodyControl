@@ -86,6 +86,7 @@
 // Motion Data Reader
 #include "../include/motion_data_reader.hpp"
 #include "../include/motion_catalog.hpp"
+#include "../include/foot_trajectory_event.hpp"
 
 // Math utilities
 #include "../include/math_utils.hpp"
@@ -3460,6 +3461,12 @@ class G1Deploy {
           if (current_frame_ >= current_motion_->timesteps) {
             operator_state.play = false;
             if (current_motion_ ->name != "temporary_motion") {
+              FootTrajectoryEvent::WriteEvent(
+                  "end",
+                  current_motion_->name,
+                  motion_reader_.current_motion_index_,
+                  current_frame_,
+                  current_motion_->timesteps);
               std::cout << "______________________________________________________" << std::endl;
               std::cout << "Motion index: " << motion_reader_.current_motion_index_ << " : " << current_motion_->name << " completed." << std::endl;
               std::cout << "______________________________________________________" << std::endl;

@@ -17,7 +17,9 @@ cd /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy
 bash deploy.sh --input-type keyboard --motion-data /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy/reference/self sim
 ```
 
-终端3 启动原始舞蹈动作和 sonic 动作对比
+终端3 启动原始舞蹈动作和 sonic 动作对比 
+
+左：标动作参考姿态  中：红色为实机动作，绿色为目标动作  右：温度可视化机器人
 
 ```bash
 cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
