@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonic Motion Manager</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; background: #111827; color: #e5e7eb; }
+    button, input { font: inherit; }
+    button { padding: 8px 12px; border: 0; border-radius: 6px; cursor: pointer; background: #2563eb; color: white; }
+    button.danger { background: #dc2626; }
+    button.secondary { background: #374151; }
+    .card { background: #1f2937; border: 1px solid #374151; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    #dropZone { border: 2px dashed #6b7280; border-radius: 10px; padding: 30px; text-align: center; }
+    #dropZone.drag { border-color: #60a5fa; background: #172554; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px; border-bottom: 1px solid #374151; text-align: left; vertical-align: top; }
+    .ok { color: #86efac; }
+    .bad { color: #fca5a5; }
+    .muted { color: #9ca3af; }
+    #status { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Sonic Motion Manager</h1>
+
+  <div class="card">
+    <div id="dropZone">Drop a motion .zip here, or use the selectors below.</div>
+    <p>
+      <input id="zipInput" type="file" accept=".zip">
+      <button onclick="uploadZip()">Upload zip</button>
+    </p>
+    <p>
+      <input id="folderInput" type="file" webkitdirectory multiple>
+      <button onclick="uploadFolder()">Upload folder</button>
+    </p>
+    <p>
+      <button class="secondary" onclick="requestReload()">Request Sonic reload</button>
+      <button class="secondary" onclick="loadMotions()">Refresh list</button>
+    </p>
+    <div id="status" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h2>Motions</h2>
+    <button class="danger" onclick="deleteSelected()">Delete selected</button>
+    <table>
+      <thead><tr><th></th><th>Name</th><th>Status</th><th>Timesteps</th><th>Size</th><th>Modified</th></tr></thead>
+      <tbody id="motionRows"></tbody>
+    </table>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const rowsEl = document.getElementById('motionRows');
+    const dropZone = document.getElementById('dropZone');
+
+    function setStatus(message) { statusEl.textContent = message; }
+    function sizeText(bytes) {
+      if (bytes > 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+      if (bytes > 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return bytes + ' B';
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(JSON.stringify(data.detail || data));
+      return data;
+    }
+
+    async function loadMotions() {
+      try {
+        const data = await api('/api/motions');
+        rowsEl.innerHTML = '';
+        for (const motion of data.motions) {
+          const tr = document.createElement('tr');
+          const status = motion.valid ? 'OK' : motion.errors.map(escapeHtml).join('<br>');
+          tr.innerHTML = `
+            <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
+            <td>${escapeHtml(motion.name)}</td>
+            <td class="${motion.valid ? 'ok' : 'bad'}">${status}</td>
+            <td>${motion.timesteps ?? ''}</td>
+            <td>${sizeText(motion.size_bytes)}</td>
+            <td>${escapeHtml(motion.mtime_iso)}</td>`;
+          rowsEl.appendChild(tr);
+        }
+        setStatus(`Motion directory: ${data.motion_dir}`);
+      } catch (err) {
+        setStatus('Failed to load motions: ' + err.message);
+      }
+    }
+
+    async function uploadFiles(files) {
+      if (!files.length) return;
+      const form = new FormData();
+      for (const file of files) form.append('files', file, file.webkitRelativePath || file.name);
+      setStatus('Uploading...');
+      try {
+        const data = await api('/api/motions/upload', { method: 'POST', body: form });
+        setStatus(`Uploaded ${data.motion}. Sonic reload requested.`);
+        await loadMotions();
+      } catch (err) {
+        setStatus('Upload failed: ' + err.message);
+      }
+    }
+
+    function uploadZip() { uploadFiles(document.getElementById('zipInput').files); }
+    function uploadFolder() { uploadFiles(document.getElementById('folderInput').files); }
+
+    async function requestReload() {
+      try {
+        await api('/api/reload', { method: 'POST' });
+        setStatus('Sonic reload requested.');
+      } catch (err) {
+        setStatus('Reload request failed: ' + err.message);
+      }
+    }
+
+    async function deleteSelected() {
+      const selected = [...rowsEl.querySelectorAll('input:checked')].map(input => input.value);
+      if (!selected.length) return setStatus('No motions selected.');
+      if (!confirm(`Move ${selected.length} motion(s) to trash?`)) return;
+      try {
+        for (const name of selected) await api('/api/motions/' + encodeURIComponent(name), { method: 'DELETE' });
+        setStatus('Deleted selected motions. Sonic reload requested.');
+        await loadMotions();
+      } catch (err) {
+        setStatus('Delete failed: ' + err.message);
+      }
+    }
+
+    dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+    dropZone.addEventListener('drop', event => {
+      event.preventDefault();
+      dropZone.classList.remove('drag');
+      uploadFiles(event.dataTransfer.files);
+    });
+
+    loadMotions();
+  </script>
+</body>
+</html>

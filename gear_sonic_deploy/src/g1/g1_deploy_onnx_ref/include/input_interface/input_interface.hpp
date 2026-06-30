@@ -396,6 +396,11 @@ public:
         return {};
     }
 
+    /// @brief Consume a one-shot request to reload the reference motion library.
+    virtual bool ConsumeReloadMotionsRequest() {
+        return false;
+    }
+
     // ------------------------------------------------------------------
     // Shared stdin buffering
     // ------------------------------------------------------------------

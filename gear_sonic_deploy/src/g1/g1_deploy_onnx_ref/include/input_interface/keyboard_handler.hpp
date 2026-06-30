@@ -109,6 +109,7 @@ class SimpleKeyboard : public InputInterface {
 
     bool encoder_mode_toggle = false;  ///< Toggle encoder-mode (Z key) this frame.
     bool report_temperature = false;   ///< Print motor temperatures (F key) this frame.
+    bool reload_motions = false;       ///< Reload reference motions (U key) this frame.
 
     // Persistent planner state
     double planner_facing_angle = 0.0;   ///< Accumulated facing direction (radians).
@@ -180,6 +181,7 @@ class SimpleKeyboard : public InputInterface {
       planner_emergency_stop = false;
       encoder_mode_toggle = false;
       report_temperature = false;
+      reload_motions = false;
 
       // Read keyboard input (using shared buffered reading)
       char ch;
@@ -264,6 +266,8 @@ class SimpleKeyboard : public InputInterface {
                 case 'Z': encoder_mode_toggle = true; break; // Toggle encoder mode
                 case 'f':
                 case 'F': report_temperature = true; break; // Report motor temperatures
+                case 'u':
+                case 'U': reload_motions = true; break; // Reload reference motions
             }
 
             // Limit movement speed and height to the range of the movement mode
@@ -326,10 +330,18 @@ class SimpleKeyboard : public InputInterface {
             case 'Z': encoder_mode_toggle = true; break; // Toggle encoder mode
             case 'h':
             case 'H': report_temperature = true; break; // Report motor temperatures
+            case 'u':
+            case 'U': reload_motions = true; break; // Reload reference motions
           }
         }
         
       }
+    }
+
+    bool ConsumeReloadMotionsRequest() override {
+      bool requested = reload_motions;
+      reload_motions = false;
+      return requested;
     }
 
     // Override the handle_input function from InputInterface

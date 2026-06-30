@@ -63,6 +63,7 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <optional>
 #include <chrono>
 #include <algorithm>
 #include <numeric>
@@ -213,12 +214,19 @@ class G1Deploy {
     // Motion data reader and current motion
     MotionDataReader motion_reader_;
     MotionCatalog motion_catalog_;
+    std::string motion_data_path_;
+    std::string motion_catalog_path_;
+    std::filesystem::path motion_reload_flag_path_;
+    std::optional<std::filesystem::file_time_type> last_motion_reload_flag_mtime_;
+    std::chrono::steady_clock::time_point last_motion_reload_check_{};
+    static constexpr std::chrono::milliseconds MOTION_RELOAD_CHECK_INTERVAL{500};
     
-    // Current motion and frame (using shared_ptr for thread safety)
+    // current_motion_mutex_ protects motion_reader_.motions/current_motion_index_,
+    // current_motion_, and current_frame_ during motion switches and hot reloads.
     std::shared_ptr<const MotionSequence> current_motion_ = nullptr;
     int current_frame_ = 0;
     int saved_frame_for_observation_window_ = 0; // for observation window
-    std::mutex current_motion_mutex_; // for current motion and frame synchronization
+    std::mutex current_motion_mutex_;
 
 #if HAS_ROS2
     std::unique_ptr<ROS2CommandHandler> ros2_command_handler_;
@@ -2162,6 +2170,130 @@ class G1Deploy {
       return loaded;
     }
 
+    bool LoadMotionDataInto(MotionDataReader& reader,
+                            MotionCatalog& catalog,
+                            const std::string& motion_data_path,
+                            const std::string& motion_catalog_path) const {
+      std::string resolved_catalog_path = this->ResolveMotionCatalogPath(motion_catalog_path, motion_data_path);
+      if (!resolved_catalog_path.empty()) {
+        if (!catalog.LoadFromYaml(resolved_catalog_path)) { return false; }
+        reader.motions.clear();
+        reader.current_motion_index_ = 0;
+        auto& entries = catalog.Entries();
+        for (size_t i = 0; i < entries.size(); ++i) {
+          if (!entries[i].enabled) { continue; }
+          int next_motion_index = static_cast<int>(reader.motions.size());
+          if (reader.ReadMotionDirectory(entries[i].resolved_path, entries[i].id)) {
+            catalog.BindMotionIndex(i, next_motion_index);
+          }
+        }
+        return !reader.motions.empty();
+      }
+
+      bool loaded = reader.ReadFromCSV(motion_data_path);
+      if (loaded) { catalog.BuildFromLoadedMotions(reader.motions); }
+      return loaded;
+    }
+
+    void ApplyEncodeModeToReferenceMotions(MotionDataReader& reader) const {
+      for (auto& motion : reader.motions) {
+        if (motion) { motion->SetEncodeMode(initial_encoder_mode_); }
+      }
+    }
+
+    int FindMotionIndexByName(const MotionDataReader& reader, const std::string& name) const {
+      if (name.empty()) { return -1; }
+      for (size_t i = 0; i < reader.motions.size(); ++i) {
+        if (reader.motions[i] && reader.motions[i]->name == name) {
+          return static_cast<int>(i);
+        }
+      }
+      return -1;
+    }
+
+    bool ReloadMotionData(const std::string& reason) {
+      if (motion_data_path_.empty()) {
+        std::cerr << "[MotionReload] Motion data path is empty; reload skipped" << std::endl;
+        return false;
+      }
+
+      std::string previous_motion_name;
+      int previous_index = 0;
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        previous_index = motion_reader_.current_motion_index_;
+        if (current_motion_) { previous_motion_name = current_motion_->name; }
+      }
+
+      MotionDataReader new_reader;
+      MotionCatalog new_catalog;
+      if (!LoadMotionDataInto(new_reader, new_catalog, motion_data_path_, motion_catalog_path_) || new_reader.motions.empty()) {
+        std::cerr << "[MotionReload] Failed to reload valid motions from " << motion_data_path_
+                  << " (reason: " << reason << "). Keeping existing motions." << std::endl;
+        return false;
+      }
+      ApplyEncodeModeToReferenceMotions(new_reader);
+
+      int new_index = FindMotionIndexByName(new_reader, previous_motion_name);
+      if (new_index < 0) {
+        new_index = std::clamp(previous_index, 0, static_cast<int>(new_reader.motions.size()) - 1);
+      }
+
+      std::shared_ptr<const MotionSequence> selected_motion = new_reader.GetMotionShared(static_cast<size_t>(new_index));
+      if (!selected_motion) {
+        std::cerr << "[MotionReload] Reloaded motion index is invalid; keeping existing motions" << std::endl;
+        return false;
+      }
+
+      movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                   {0.0f, 0.0f, 0.0f},
+                                                   {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+      if (planner_) {
+        planner_->planner_state_.enabled = false;
+        planner_->planner_state_.initialized = false;
+      }
+      if (planner_motion_) { planner_motion_->timesteps = 0; }
+
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        motion_reader_ = std::move(new_reader);
+        motion_catalog_ = std::move(new_catalog);
+        motion_reader_.current_motion_index_ = new_index;
+        current_motion_ = selected_motion;
+        current_frame_ = 0;
+        saved_frame_for_observation_window_ = 0;
+        operator_state.play = false;
+        reinitialize_heading_ = true;
+      }
+
+      std::cout << "[MotionReload] Reloaded " << motion_reader_.motions.size()
+                << " motions from " << motion_data_path_
+                << " (reason: " << reason << "). Current: "
+                << selected_motion->name << " (paused at frame 0)" << std::endl;
+      return true;
+    }
+
+    bool CheckMotionReloadFlag() {
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_motion_reload_check_ < MOTION_RELOAD_CHECK_INTERVAL) { return false; }
+      last_motion_reload_check_ = now;
+      if (motion_reload_flag_path_.empty()) { return false; }
+
+      std::error_code ec;
+      if (!std::filesystem::exists(motion_reload_flag_path_, ec) || ec) { return false; }
+      auto mtime = std::filesystem::last_write_time(motion_reload_flag_path_, ec);
+      if (ec) { return false; }
+      if (!last_motion_reload_flag_mtime_.has_value()) {
+        last_motion_reload_flag_mtime_ = mtime;
+        return true;
+      }
+      if (mtime != last_motion_reload_flag_mtime_.value()) {
+        last_motion_reload_flag_mtime_ = mtime;
+        return true;
+      }
+      return false;
+    }
+
     bool SelectMotionFromCatalog(const std::string& request) {
       int motion_index = -1;
       MotionCatalogEntry entry;
@@ -2263,6 +2395,15 @@ class G1Deploy {
       dex3_hands_.initialize("");
 
       audio_thread_ = std::make_unique<AudioThread>();
+
+      motion_data_path_ = motion_data_path;
+      motion_catalog_path_ = motion_catalog_path;
+      motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
+      last_motion_reload_check_ = std::chrono::steady_clock::now();
+      std::error_code reload_flag_error;
+      if (std::filesystem::exists(motion_reload_flag_path_, reload_flag_error) && !reload_flag_error) {
+        last_motion_reload_flag_mtime_ = std::filesystem::last_write_time(motion_reload_flag_path_, reload_flag_error);
+      }
 
       if(!target_motion_file_path.empty())
       {
@@ -3517,6 +3658,13 @@ class G1Deploy {
 
       // Update input interface (poll for new data)
       input_interface_->update();
+
+      if (input_interface_->ConsumeReloadMotionsRequest()) {
+        this->ReloadMotionData("keyboard");
+      }
+      if (this->CheckMotionReloadFlag()) {
+        this->ReloadMotionData("reload flag");
+      }
       
       // Handle input using the interface - input handler updates everything directly
       const std::shared_ptr<const LowState_> low_state_data = low_state_buffer_.GetDataWithTime().data;
