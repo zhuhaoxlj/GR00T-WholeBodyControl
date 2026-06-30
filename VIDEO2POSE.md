@@ -36,6 +36,15 @@ python gear_sonic_deploy/visualize_motion.py \
   --hide-vr-markers
 ```
 
+终端4 管理 SONIC 舞蹈页面
+
+```bash
+cd /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy
+uv run --project web_manager uvicorn web_manager.server:app \
+  --host 127.0.0.1 \
+  --port 8080
+```
+
 ## 真机
 
 跳舞
