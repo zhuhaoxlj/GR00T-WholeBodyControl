@@ -22,6 +22,7 @@ else()
   # Try to locate ROS2 only when explicitly enabled
   find_package(rclcpp QUIET)
   find_package(std_msgs QUIET)
+  find_package(std_srvs QUIET)
 endif()
 
 # Find msgpack for message serialization (used by ROS2 and ZMQ handlers)
@@ -172,6 +173,12 @@ else()
 endif()
 
 find_package(Eigen3 REQUIRED)
+find_package(yaml-cpp REQUIRED)
+if(TARGET yaml-cpp::yaml-cpp)
+  set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+else()
+  set(YAML_CPP_TARGET yaml-cpp)
+endif()
 
 set(EXE_INCLUDES
   ${CMAKE_CURRENT_SOURCE_DIR}/include/
@@ -194,6 +201,7 @@ set(EXE_LIBS
   ${TensorRT_nvinfer_LIBRARY} ${TensorRT_nvonnxparser_LIBRARY}
   ${CUDLA_LIBRARY}
   ${ZMQ_LIBRARY}
+  ${YAML_CPP_TARGET}
 )
 
 
@@ -217,7 +225,7 @@ set_target_properties(
              CXX_EXTENSIONS OFF)
 
 # Optional ROS2 support for main executable and tests
-if(rclcpp_FOUND AND std_msgs_FOUND)
+if(rclcpp_FOUND AND std_msgs_FOUND AND std_srvs_FOUND)
   # Load ROS2 configuration (handles both main executable and tests)
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ROS2.cmake)
   
@@ -229,7 +237,7 @@ if(rclcpp_FOUND AND std_msgs_FOUND)
   message(STATUS "✅ ROS2InputHandler support enabled with msgpack")
 else()
   target_compile_definitions(${EXECUTABLE_NAME} PRIVATE HAS_ROS2=0)
-  message(STATUS "ROS2 not found - building without ROS2InputHandler support")
+  message(STATUS "ROS2/std_srvs not found - building without ROS2InputHandler support")
 endif()
 
 # test executable:

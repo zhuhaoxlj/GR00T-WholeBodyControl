@@ -1,0 +1,13 @@
+[project]
+name = "sonic-motion-web-manager"
+version = "0.1.0"
+description = "Local web manager for Sonic reference motions"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
+]
+
+[tool.uv]
+package = false

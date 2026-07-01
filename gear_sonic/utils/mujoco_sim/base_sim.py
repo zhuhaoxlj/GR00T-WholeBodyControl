@@ -6,9 +6,13 @@ BaseSimulator wraps DefaultEnv with rate-limiting and viewer/image update loops.
 """
 
 import os
+from collections import deque
+from datetime import datetime
+import json
 import pathlib
 from pathlib import Path
 import pickle
+import re
 import tempfile
 from threading import Lock, Thread
 import time
@@ -63,6 +67,65 @@ class DefaultEnv:
 
         self.init_scene()
         self.last_reward = 0
+        self.foot_trajectory_enabled = self.config.get("ENABLE_FOOT_TRAJECTORY", True)
+        self.foot_trajectory_sample_stride = self.config.get("FOOT_TRAJECTORY_SAMPLE_STRIDE", 4)
+        self.foot_trajectory_ground_threshold = self.config.get(
+            "FOOT_TRAJECTORY_GROUND_THRESHOLD", 0.025
+        )
+        self.foot_trajectory_min_distance = self.config.get("FOOT_TRAJECTORY_MIN_DISTANCE", 0.01)
+        self.foot_trajectory_z_offset = self.config.get("FOOT_TRAJECTORY_Z_OFFSET", 0.012)
+        self.foot_trajectory_counter = 0
+        self.foot_trajectory_event_enabled = self.config.get(
+            "FOOT_TRAJECTORY_EVENT_ENABLED", True
+        )
+        self.foot_trajectory_recording_active = not self.foot_trajectory_event_enabled
+        self.foot_trajectory_event_file = Path(
+            os.environ.get(
+                "G1_DANCE_TRAJECTORY_EVENT_FILE",
+                self.config.get(
+                    "FOOT_TRAJECTORY_EVENT_FILE", "/tmp/g1_dance_trajectory_event.json"
+                ),
+            )
+        )
+        self.foot_trajectory_image_dir = Path(
+            self.config.get(
+                "FOOT_TRAJECTORY_IMAGE_DIR",
+                Path(GEAR_SONIC_ROOT) / "outputs" / "foot_trajectories",
+            )
+        )
+        self.foot_trajectory_image_dpi = self.config.get("FOOT_TRAJECTORY_IMAGE_DPI", 160)
+        self.foot_trajectory_last_event_id = None
+        self.foot_trajectory_current_event = {}
+        try:
+            existing_event = json.loads(self.foot_trajectory_event_file.read_text())
+            self.foot_trajectory_last_event_id = (
+                existing_event.get("timestamp_ms"),
+                existing_event.get("sequence"),
+                existing_event.get("event"),
+            )
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        self.foot_trajectory = {
+            "left": deque(maxlen=self.config.get("FOOT_TRAJECTORY_MAX_POINTS", 20000)),
+            "right": deque(maxlen=self.config.get("FOOT_TRAJECTORY_MAX_POINTS", 20000)),
+        }
+        self.foot_body_ids = {
+            "left": mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "left_ankle_roll_link"
+            ),
+            "right": mujoco.mj_name2id(
+                self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "right_ankle_roll_link"
+            ),
+        }
+        self.foot_local_contact_points = np.array(
+            [
+                [-0.05, 0.025, -0.03],
+                [-0.05, -0.025, -0.03],
+                [0.12, 0.03, -0.03],
+                [0.12, -0.03, -0.03],
+            ],
+            dtype=np.float64,
+        )
 
         self.offscreen = offscreen
         if self.offscreen:
@@ -153,6 +216,7 @@ class DefaultEnv:
         self.torso_index = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, "torso_link")
         self.root_body = "pelvis"
         self.root_body_id = self.mj_model.body(self.root_body).id
+        self.elastic_band = None
 
         self.joint_class_map = self._get_dof_indices_by_class()
 
@@ -198,7 +262,7 @@ class DefaultEnv:
                 self.viewer = mujoco.viewer.launch_passive(
                     self.mj_model,
                     self.mj_data,
-                    key_callback=self.elastic_band.MujuocoKeyCallback,
+                    key_callback=self._handle_viewer_key_callback,
                     show_left_ui=False,
                     show_right_ui=False,
                 )
@@ -208,7 +272,11 @@ class DefaultEnv:
         else:
             if self.onscreen:
                 self.viewer = mujoco.viewer.launch_passive(
-                    self.mj_model, self.mj_data, show_left_ui=False, show_right_ui=False
+                    self.mj_model,
+                    self.mj_data,
+                    key_callback=self._handle_viewer_key_callback,
+                    show_left_ui=False,
+                    show_right_ui=False,
                 )
             else:
                 mujoco.mj_forward(self.mj_model, self.mj_data)
@@ -246,6 +314,12 @@ class DefaultEnv:
         self.body_joint_index = np.array(self.body_joint_index)
         self.left_hand_index = np.array(self.left_hand_index)
         self.right_hand_index = np.array(self.right_hand_index)
+
+    def _handle_viewer_key_callback(self, key):
+        if self.elastic_band:
+            self.elastic_band.MujuocoKeyCallback(key)
+        if key == ord("R") and hasattr(self, "foot_trajectory"):
+            self.clear_foot_trajectory()
 
     def init_renderers(self):
         self.renderers = {}
@@ -428,8 +502,220 @@ class DefaultEnv:
         else:
             self.mj_data.ctrl = self.torques
         mujoco.mj_step(self.mj_model, self.mj_data)
+        self.handle_foot_trajectory_events()
+        self.update_foot_trajectory()
 
         self.check_fall()
+
+    def get_foot_contact_position(self, side: str):
+        body_id = self.foot_body_ids[side]
+        if body_id < 0:
+            return None
+
+        body_pos = self.mj_data.xpos[body_id]
+        body_rot = self.mj_data.xmat[body_id].reshape(3, 3)
+        foot_points = body_pos + self.foot_local_contact_points @ body_rot.T
+        near_ground_points = foot_points[
+            foot_points[:, 2] <= self.foot_trajectory_ground_threshold
+        ]
+        if len(near_ground_points) == 0:
+            return None
+
+        contact_pos = near_ground_points.mean(axis=0)
+        contact_pos[2] = self.foot_trajectory_z_offset
+        return contact_pos
+
+    def update_foot_trajectory(self):
+        if not self.foot_trajectory_enabled:
+            return
+        if not self.foot_trajectory_recording_active:
+            return
+
+        self.foot_trajectory_counter += 1
+        if self.foot_trajectory_counter % self.foot_trajectory_sample_stride != 0:
+            return
+
+        for side in ("left", "right"):
+            contact_pos = self.get_foot_contact_position(side)
+            if contact_pos is None:
+                continue
+
+            trajectory = self.foot_trajectory[side]
+            if (
+                len(trajectory) == 0
+                or np.linalg.norm(contact_pos[:2] - trajectory[-1][:2])
+                >= self.foot_trajectory_min_distance
+            ):
+                trajectory.append(contact_pos.copy())
+
+    def clear_foot_trajectory(self):
+        self.foot_trajectory_counter = 0
+        for trajectory in self.foot_trajectory.values():
+            trajectory.clear()
+
+    def handle_foot_trajectory_events(self):
+        if not self.foot_trajectory_enabled or not self.foot_trajectory_event_enabled:
+            return
+        try:
+            event = json.loads(self.foot_trajectory_event_file.read_text())
+        except FileNotFoundError:
+            return
+        except (json.JSONDecodeError, OSError) as exc:
+            if self.config.get("verbose", False):
+                print(f"Failed to read foot trajectory event: {exc}")
+            return
+
+        event_id = (event.get("timestamp_ms"), event.get("sequence"), event.get("event"))
+        if event_id == self.foot_trajectory_last_event_id:
+            return
+
+        self.foot_trajectory_last_event_id = event_id
+        event_type = event.get("event")
+        if event_type == "start":
+            self.clear_foot_trajectory()
+            self.foot_trajectory_current_event = event
+            self.foot_trajectory_recording_active = True
+            print(
+                "Foot trajectory recording started for "
+                f"{event.get('motion_name', 'unknown_motion')}"
+            )
+        elif event_type == "end":
+            if not self.foot_trajectory_recording_active:
+                return
+            self.update_foot_trajectory()
+            saved_path = self.save_foot_trajectory_image(event)
+            self.foot_trajectory_recording_active = False
+            if saved_path is not None:
+                print(f"Foot trajectory image saved: {saved_path}")
+
+    def save_foot_trajectory_image(self, event):
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError as exc:
+            print(f"Cannot save foot trajectory image; matplotlib is unavailable: {exc}")
+            return None
+
+        self.foot_trajectory_image_dir.mkdir(parents=True, exist_ok=True)
+        motion_name = event.get(
+            "motion_name", self.foot_trajectory_current_event.get("motion_name", "unknown_motion")
+        )
+        motion_index = event.get(
+            "motion_index", self.foot_trajectory_current_event.get("motion_index", -1)
+        )
+        safe_motion_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(motion_name)).strip("_")
+        if not safe_motion_name:
+            safe_motion_name = "unknown_motion"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = (
+            self.foot_trajectory_image_dir
+            / f"{timestamp}_motion{motion_index}_{safe_motion_name}_foot_trajectory.png"
+        )
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        colors = {"left": "#1f9ed6", "right": "#f26b2e"}
+        labels = {"left": "left foot", "right": "right foot"}
+        has_points = False
+
+        for side, trajectory in self.foot_trajectory.items():
+            if not trajectory:
+                continue
+            points = np.asarray(list(trajectory), dtype=np.float64)
+            has_points = True
+            ax.plot(points[:, 0], points[:, 1], color=colors[side], linewidth=1.8, alpha=0.75)
+            ax.scatter(points[:, 0], points[:, 1], color=colors[side], s=18, alpha=0.55)
+            ax.scatter(
+                points[0, 0],
+                points[0, 1],
+                color=colors[side],
+                edgecolors="black",
+                marker="o",
+                s=95,
+                zorder=5,
+                label=f"{labels[side]} start",
+            )
+            ax.scatter(
+                points[-1, 0],
+                points[-1, 1],
+                color=colors[side],
+                edgecolors="black",
+                marker="X",
+                s=115,
+                zorder=5,
+                label=f"{labels[side]} end",
+            )
+            ax.annotate(
+                f"{side} start",
+                xy=(points[0, 0], points[0, 1]),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize=9,
+            )
+            ax.annotate(
+                f"{side} end",
+                xy=(points[-1, 0], points[-1, 1]),
+                xytext=(6, -12),
+                textcoords="offset points",
+                fontsize=9,
+            )
+
+        title = f"Foot trajectory: {motion_name}"
+        if motion_index is not None:
+            title += f" (index {motion_index})"
+        ax.set_title(title)
+        ax.set_xlabel("world x [m]")
+        ax.set_ylabel("world y [m]")
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.set_aspect("equal", adjustable="box")
+        if has_points:
+            ax.legend(loc="best")
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No foot contact trajectory points recorded",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
+
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=self.foot_trajectory_image_dpi, bbox_inches="tight")
+        plt.close(fig)
+        return output_path
+
+    def draw_foot_trajectory(self):
+        if not self.foot_trajectory_enabled or self.viewer is None:
+            return
+
+        colors = {
+            "left": np.array([0.1, 0.8, 1.0, 0.85], dtype=np.float32),
+            "right": np.array([1.0, 0.45, 0.1, 0.85], dtype=np.float32),
+        }
+        for side, trajectory in self.foot_trajectory.items():
+            for point_index, point in enumerate(trajectory):
+                geom_index = self.viewer.user_scn.ngeom
+                if geom_index >= self.viewer.user_scn.maxgeom:
+                    return
+
+                color = colors[side].copy()
+                color[3] = 0.25 + 0.6 * (point_index + 1) / max(1, len(trajectory))
+                mujoco.mjv_initGeom(
+                    self.viewer.user_scn.geoms[geom_index],
+                    type=mujoco.mjtGeom.mjGEOM_SPHERE,
+                    size=np.array([0.018, 0.0, 0.0], dtype=np.float64),
+                    pos=point,
+                    mat=np.eye(3, dtype=np.float64).flatten(),
+                    rgba=color,
+                )
+                self.viewer.user_scn.ngeom += 1
+
+    def clear_foot_trajectory(self):
+        for trajectory in self.foot_trajectory.values():
+            trajectory.clear()
+        self.foot_trajectory_counter = 0
 
     def apply_perturbation(self, key):
         perturbation_x_body = 0.0
@@ -454,6 +740,8 @@ class DefaultEnv:
 
     def update_viewer(self):
         if self.viewer is not None:
+            self.viewer.user_scn.ngeom = 0
+            self.draw_foot_trajectory()
             self.viewer.sync()
 
     def update_viewer_camera(self):
@@ -500,6 +788,8 @@ class DefaultEnv:
 
         if key == "backspace":
             self.reset()
+        if key == "r":
+            self.clear_foot_trajectory()
         if key == "v":
             self.update_viewer_camera()
         if key in ["up", "down", "left", "right"]:
@@ -525,6 +815,7 @@ class DefaultEnv:
 
     def reset(self):
         mujoco.mj_resetData(self.mj_model, self.mj_data)
+        self.clear_foot_trajectory()
 
 
 class BaseSimulator:

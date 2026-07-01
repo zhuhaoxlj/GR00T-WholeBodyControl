@@ -14,6 +14,33 @@ import zmq
 import threading
 import msgpack
 
+
+def lift_robot_to_ground(mj_model, mj_data, qpos_start, body_prefix, clearance):
+    min_z = None
+    for geom_id in range(mj_model.ngeom):
+        body_id = mj_model.geom_bodyid[geom_id]
+        body_name = mujoco.mj_id2name(mj_model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+        if not body_name or not body_name.startswith(body_prefix):
+            continue
+
+        geom_type = mj_model.geom_type[geom_id]
+        if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
+            mesh_id = mj_model.geom_dataid[geom_id]
+            vert_start = mj_model.mesh_vertadr[mesh_id]
+            vert_count = mj_model.mesh_vertnum[mesh_id]
+            vertices = mj_model.mesh_vert[vert_start:vert_start + vert_count]
+            geom_xmat = mj_data.geom_xmat[geom_id].reshape(3, 3)
+            world_vertices = vertices @ geom_xmat.T + mj_data.geom_xpos[geom_id]
+            geom_bottom_z = float(np.min(world_vertices[:, 2]))
+        else:
+            geom_bottom_z = mj_data.geom_xpos[geom_id, 2] - mj_model.geom_rbound[geom_id]
+        min_z = geom_bottom_z if min_z is None else min(min_z, geom_bottom_z)
+
+    if min_z is None:
+        return
+
+    mj_data.qpos[qpos_start + 2] += clearance - min_z
+
 def key_call_back(keycode):
     global \
         curr_start, \
@@ -95,7 +122,45 @@ def load_anim_data(csv_path: str):
         with open(csv_path, mode="r", newline="") as file:
 
             csv_reader = csv.reader(file)
-            for row in csv_reader:
+            first_row = next(csv_reader, None)
+            if first_row and first_row[0] == "Frame" and "root_rotateX" in first_row:
+                header = first_row
+                col = {name: i for i, name in enumerate(header)}
+                joint_cols = [i for i, name in enumerate(header) if name.endswith("_dof")]
+                root_pos = []
+                root_quat = []
+                dof = []
+                for row in csv_reader:
+                    if not row:
+                        continue
+                    root_pos.append([
+                        float(row[col["root_translateX"]]) / 100.0,
+                        float(row[col["root_translateY"]]) / 100.0,
+                        float(row[col["root_translateZ"]]) / 100.0,
+                    ])
+                    euler_deg = [
+                        float(row[col["root_rotateX"]]),
+                        float(row[col["root_rotateY"]]),
+                        float(row[col["root_rotateZ"]]),
+                    ]
+                    quat_xyzw = R.from_euler("xyz", euler_deg, degrees=True).as_quat()
+                    root_quat.append(quat_xyzw[[3, 0, 1, 2]])  # MuJoCo wxyz
+                    dof.append([np.deg2rad(float(row[i])) for i in joint_cols])
+
+                ret.append({
+                    "dof": np.array(dof, dtype=np.float64),
+                    "root_rot": np.array(root_quat, dtype=np.float64),
+                    "root_trans_offset": np.array(root_pos, dtype=np.float64),
+                })
+                return ret
+
+            if first_row:
+                rows = [first_row]
+            else:
+                rows = []
+            rows.extend(csv_reader)
+
+            for row in rows:
                 if len(row):
                     r = [x for x in row if x]
                     assert len(r) == 36
@@ -156,8 +221,20 @@ def main(args) -> None:
         frame_idx, \
         anim_idx
         
-    fps = 50
-    curr_start, num_motions, motion_id, motion_acc, time_step, dt, paused, frame_idx, anim_idx = 0, 1, 0, set(), 0, 1 / fps, False, int(0), 0
+    fps = args.fps
+    curr_start, num_motions, motion_id, motion_acc, time_step, dt, paused, frame_idx, anim_idx = (
+        0,
+        1,
+        0,
+        set(),
+        0,
+        1 / fps,
+        args.paused,
+        int(args.start_frame),
+        0,
+    )
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
 
     def prepend_names(elem, prefix):
         # If element has a 'name' attribute, prepend the prefix
@@ -175,13 +252,16 @@ def main(args) -> None:
         for child in elem:
             replace_attribute(child, attribute, value)
 
-    main_scene = etree.parse('g1/scene_empty.xml')
-    robot1 = etree.parse('g1/g1_29dof_old.xml')
+    scene_path = os.path.join(script_dir, "g1", "scene_empty.xml")
+    robot_xml_path = os.path.join(script_dir, "g1", "g1_29dof_old.xml")
+
+    main_scene = etree.parse(scene_path)
+    robot1 = etree.parse(robot_xml_path)
     robot_asset = robot1.find('asset')
     scene_asset = main_scene.find('asset')
+    mesh_dir = os.path.join(script_dir, "g1", "meshes")
     for mesh in robot_asset.findall('mesh'):
-        # INSERT_YOUR_CODE
-        mesh.set("file", os.path.join("g1","meshes", mesh.get('file')))
+        mesh.set("file", os.path.join(mesh_dir, mesh.get('file')))
         scene_asset.append(mesh)
     
     robot_default = robot1.find('default')
@@ -194,14 +274,14 @@ def main(args) -> None:
     prepend_names(robot1_body, "robot1_")
     scene_worldbody.append(robot1_body)
 
-    robot2 = etree.parse('g1/g1_29dof_old.xml')
+    robot2 = etree.parse(robot_xml_path)
     robot2_body = robot2.find('worldbody').find('body')
     prepend_names(robot2_body, "robot2_")
     replace_attribute(robot2_body, "rgba", "0.5 0.1 0.1 1")
     robot2_body.set("pos", "0 -1 -10")
     scene_worldbody.append(robot2_body)
 
-    robot3 = etree.parse('g1/g1_29dof_old.xml')
+    robot3 = etree.parse(robot_xml_path)
     robot3_body = robot3.find('worldbody').find('body')
     prepend_names(robot3_body, "robot3_")
     replace_attribute(robot3_body, "rgba", "0.1 0.5 0.1 0.2")
@@ -209,7 +289,7 @@ def main(args) -> None:
     scene_worldbody.append(robot3_body)
 
     # Robot 4: temperature visualization robot (white transparent, offset 3m to the right)
-    robot4 = etree.parse('g1/g1_29dof_old.xml')
+    robot4 = etree.parse(robot_xml_path)
     robot4_body = robot4.find('worldbody').find('body')
     prepend_names(robot4_body, "robot4_")
     replace_attribute(robot4_body, "rgba", "0.8 0.8 0.8 0.1")
@@ -261,6 +341,16 @@ def main(args) -> None:
 
     RECORDING = False
     mj_model.opt.timestep = dt
+    # This script is a kinematic viewer. Contacts can become ill-conditioned
+    # when externally supplied root poses start below the floor.
+    mj_model.opt.disableflags |= int(mujoco.mjtDisableBit.mjDSBL_CONTACT)
+    mj_model.opt.gravity[:] = 0.0
+
+    # Put all free roots at a safe initial height before the first mj_forward().
+    # Realtime debug data will overwrite these values on the next viewer tick.
+    for qpos_start in (0, 36, 72, 108):
+        if qpos_start + 2 < mj_model.nq:
+            mj_data.qpos[qpos_start + 2] = max(mj_data.qpos[qpos_start + 2], 1.0)
     try:
         context = mujoco.GLContext(1920, 1080)
         context.make_current()
@@ -286,37 +376,67 @@ def main(args) -> None:
             step_start = time.time()
             time_idx = frame_idx % motion_len
             data_dict = data_csv_dicts[anim_idx % len(data_csv_dicts)]
-            mj_data.qpos[:3] = data_dict["root_trans_offset"][time_idx]
-            mj_data.qpos[3:7] = data_dict["root_rot"][time_idx]
+            target_pos = data_dict["root_trans_offset"][time_idx].copy()
+            target_rot = data_dict["root_rot"][time_idx]
+
+            if "dof_measured" in data_dict and args.align_target_height:
+                measured_pos_for_align = data_dict["root_trans_offset_measured"][time_idx]
+                target_pos[2] = measured_pos_for_align[2]
+
+            target_display_pos = target_pos.copy()
+            target_display_pos[1] += args.target_y_offset
+
+            mj_data.qpos[:3] = target_display_pos
+            mj_data.qpos[3:7] = target_rot
             mj_data.qpos[7:7+29] = data_dict["dof"][time_idx]
 
             if "dof_measured" in data_dict:
-                mj_data.qpos[36:36+3] = data_dict["root_trans_offset_measured"][time_idx]
+                measured_display_pos = data_dict["root_trans_offset_measured"][time_idx].copy()
+                measured_display_pos[1] += args.measured_y_offset
+
+                mj_data.qpos[36:36+3] = measured_display_pos
                 mj_data.qpos[39:39+4] = data_dict["root_rot_measured"][time_idx]
                 mj_data.qpos[43:43+29] = data_dict["dof_measured"][time_idx]
 
-
-                mj_data.qpos[43+29:43+29+3] = data_dict["root_trans_offset_measured"][time_idx]
-                mj_data.qpos[43+29+3:43+29+3+4] = data_dict["root_rot"][time_idx]
+                overlay_target_pos = measured_display_pos.copy()
+                overlay_target_pos[1] += args.overlay_target_y_offset
+                mj_data.qpos[43+29:43+29+3] = overlay_target_pos
+                mj_data.qpos[43+29+3:43+29+3+4] = target_rot
                 mj_data.qpos[43+29+3+4:43+29+3+4+29] = data_dict["dof"][time_idx]
 
-                # Robot 4: temperature visualization (copy measured state, offset 3m on y)
+                # Robot 4: temperature visualization (copy measured state, offset on y)
                 r4_base = 36 * 3  # 108
-                r4_pos = data_dict["root_trans_offset_measured"][time_idx].copy()
-                r4_pos[1] -= 1.0  # offset 1m to the right
+                r4_pos = measured_display_pos.copy()
+                r4_pos[1] += args.temperature_y_offset
                 mj_data.qpos[r4_base:r4_base+3] = r4_pos
                 mj_data.qpos[r4_base+3:r4_base+7] = data_dict["root_rot_measured"][time_idx]
                 mj_data.qpos[r4_base+7:r4_base+36] = data_dict["dof_measured"][time_idx]
 
             mujoco.mj_forward(mj_model, mj_data)
+            if args.auto_ground:
+                lift_robot_to_ground(
+                    mj_model, mj_data, 0, "robot1_", args.ground_clearance
+                )
+                if "dof_measured" in data_dict:
+                    lift_robot_to_ground(
+                        mj_model, mj_data, 36, "robot2_", args.ground_clearance
+                    )
+                    lift_robot_to_ground(
+                        mj_model, mj_data, 72, "robot3_", args.ground_clearance
+                    )
+                    lift_robot_to_ground(
+                        mj_model, mj_data, 108, "robot4_", args.ground_clearance
+                    )
+                mujoco.mj_forward(mj_model, mj_data)
             if not paused:
                 frame_idx += 1
             
             viewer.user_scn.ngeom = 0
-            if "vr_3point_position" in data_dict:
+            if not args.hide_vr_markers and "vr_3point_position" in data_dict:
                 # Get root pose for transforming root-relative coordinates to world space
                 # VR 3-point data from C++ is normalized relative to root (see g1_deploy_onnx_ref.cpp)
-                root_trans = data_dict["root_trans_offset_measured"][time_idx]
+                root_trans = data_dict["root_trans_offset_measured"][time_idx].copy()
+                root_trans[1] += args.measured_y_offset
                 root_quat_wxyz = data_dict["root_rot_measured"][time_idx]  # [w, x, y, z] format (MuJoCo/C++ convention)
                 root_rot = R.from_quat(root_quat_wxyz, scalar_first=True)
                 
@@ -324,7 +444,7 @@ def main(args) -> None:
                     # VR 3-point position is in root-relative coordinates, transform to world
                     vr_pos_root_frame = data_dict["vr_3point_position"][i]
                     # vr_pos_world = root_trans + root_rot.apply(vr_pos_root_frame)
-                    vr_pos_world = vr_pos_root_frame + data_dict["root_trans_offset_measured"][time_idx]
+                    vr_pos_world = vr_pos_root_frame + root_trans
                     
                     if np.linalg.norm(data_dict["vr_3point_orientation"][i]) > 0:
                         # VR orientation is also root-relative, transform to world
@@ -426,6 +546,71 @@ if __name__ == "__main__":
         type=str,
         default="g1_debug",
         help="Topic to receive realtime debug messages from",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=50.0,
+        help="Playback FPS. Use 120 for QT retargeting CSV; deploy reference directories are 50 FPS.",
+    )
+    parser.add_argument(
+        "--start-frame",
+        "--frame",
+        type=int,
+        default=0,
+        help="Frame index to show first.",
+    )
+    parser.add_argument(
+        "--paused",
+        action="store_true",
+        help="Start paused so a single frame can be inspected.",
+    )
+    parser.add_argument(
+        "--align-target-height",
+        action="store_true",
+        help="In realtime debug mode, draw the target model at the measured model height.",
+    )
+    parser.add_argument(
+        "--target-y-offset",
+        type=float,
+        default=0.0,
+        help="Y offset for the main target/reference model.",
+    )
+    parser.add_argument(
+        "--measured-y-offset",
+        type=float,
+        default=0.0,
+        help="Y offset for the measured/SONIC model.",
+    )
+    parser.add_argument(
+        "--overlay-target-y-offset",
+        type=float,
+        default=0.35,
+        help="Y offset for the transparent target overlay relative to the measured model.",
+    )
+    parser.add_argument(
+        "--temperature-y-offset",
+        type=float,
+        default=-0.35,
+        help="Y offset for the temperature overlay relative to the measured model.",
+    )
+    parser.add_argument(
+        "--no-auto-ground",
+        dest="auto_ground",
+        action="store_false",
+        help="Disable automatic lifting that keeps visualized robots above the ground.",
+    )
+    parser.set_defaults(auto_ground=True)
+    parser.add_argument(
+        "--ground-clearance",
+        type=float,
+        default=0.02,
+        help="Minimum clearance above the ground for auto-grounded robot geoms.",
+    )
+    parser.add_argument(
+        "--hide-vr-markers",
+        action="store_true",
+        help="Hide yellow VR 3-point marker boxes in the viewer.",
     )
     args = parser.parse_args()
 

@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonic Motion Manager</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: rgba(18, 27, 48, 0.82);
+      --panel-strong: rgba(25, 37, 65, 0.94);
+      --line: rgba(148, 163, 184, 0.18);
+      --text: #e5edf8;
+      --muted: #93a4b8;
+      --primary: #4f8cff;
+      --primary-2: #7c3aed;
+      --danger: #ef4444;
+      --success: #34d399;
+      --warning: #f59e0b;
+      --shadow: 0 20px 55px rgba(0, 0, 0, 0.35);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 15% 10%, rgba(79, 140, 255, 0.25), transparent 32rem),
+        radial-gradient(circle at 88% 0%, rgba(124, 58, 237, 0.22), transparent 30rem),
+        linear-gradient(135deg, #070b16 0%, var(--bg) 48%, #111827 100%);
+      color: var(--text);
+    }
+
+    button, input { font: inherit; }
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 12px;
+      cursor: pointer;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--primary-2));
+      box-shadow: 0 10px 22px rgba(79, 140, 255, 0.2);
+      transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+    }
+    button:hover { transform: translateY(-1px); box-shadow: 0 14px 28px rgba(79, 140, 255, 0.28); }
+    button:active { transform: translateY(0); opacity: 0.88; }
+    button.danger { background: linear-gradient(135deg, #ef4444, #b91c1c); box-shadow: 0 10px 22px rgba(239, 68, 68, 0.2); }
+    button.secondary { background: rgba(51, 65, 85, 0.92); box-shadow: none; border: 1px solid var(--line); }
+    button.ghost { background: transparent; box-shadow: none; border: 1px solid var(--line); color: var(--text); }
+
+    .app-shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding: 26px 0 42px; }
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 18px;
+    }
+    .title-card {
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(20, 31, 55, 0.9), rgba(17, 24, 39, 0.72));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+    .eyebrow { color: #93c5fd; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; }
+    h1 { margin: 10px 0 8px; font-size: clamp(30px, 4vw, 52px); line-height: 1; }
+    .subtitle { max-width: 760px; margin: 0; color: var(--muted); font-size: 16px; line-height: 1.65; }
+    .toolbar { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+    .lang-select {
+      min-height: 38px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(15, 23, 42, 0.86);
+      color: var(--text);
+      padding: 0 12px;
+      outline: none;
+    }
+
+    .grid { display: grid; grid-template-columns: minmax(360px, 0.78fr) minmax(560px, 1.22fr); gap: 18px; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+      overflow: hidden;
+    }
+    .card-header { padding: 18px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .card-title { margin: 0; font-size: 18px; }
+    .card-body { padding: 20px; }
+
+    #dropZone {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 190px;
+      padding: 28px;
+      border: 1.5px dashed rgba(147, 197, 253, 0.45);
+      border-radius: 18px;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(37, 99, 235, 0.10), rgba(124, 58, 237, 0.08));
+      transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    }
+    #dropZone.drag { border-color: #93c5fd; transform: scale(1.01); background: linear-gradient(135deg, rgba(37, 99, 235, 0.22), rgba(124, 58, 237, 0.17)); }
+    .drop-icon { width: 54px; height: 54px; display: grid; place-items: center; margin: 0 auto 12px; border-radius: 18px; background: rgba(79, 140, 255, 0.16); color: #bfdbfe; font-size: 28px; }
+    .drop-title { font-size: 18px; font-weight: 750; margin-bottom: 6px; }
+    .drop-copy { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .actions { display: grid; gap: 12px; margin-top: 18px; }
+    .file-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+    input[type="file"] {
+      width: 100%;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.86);
+      color: var(--muted);
+    }
+    .status-box {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.78);
+      color: var(--muted);
+      white-space: pre-wrap;
+      border: 1px solid var(--line);
+      min-height: 46px;
+    }
+    .hint-list { margin: 18px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; font-size: 14px; }
+
+    .table-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .table-wrap { overflow: auto; }
+    table { width: 100%; min-width: 820px; border-collapse: collapse; }
+    th, td { padding: 14px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(15, 23, 42, 0.38); position: sticky; top: 0; }
+    tbody tr { transition: background 0.12s ease; }
+    tbody tr:hover { background: rgba(148, 163, 184, 0.06); }
+    .motion-name { font-weight: 700; color: #dbeafe; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; font-size: 12px; font-weight: 800; }
+    .badge.ok { color: #064e3b; background: rgba(52, 211, 153, 0.88); }
+    .badge.bad { color: #7f1d1d; background: rgba(252, 165, 165, 0.95); }
+    .error-list { margin-top: 8px; color: #fca5a5; font-size: 12px; line-height: 1.5; max-width: 480px; }
+    .muted { color: var(--muted); }
+    .empty { padding: 42px 18px; text-align: center; color: var(--muted); }
+
+    @media (max-width: 980px) {
+      .hero, .grid { grid-template-columns: 1fr; }
+      .toolbar { justify-content: flex-start; }
+      .app-shell { width: min(100% - 24px, 1440px); padding-top: 14px; }
+      .file-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <section class="hero">
+      <div class="title-card">
+        <div class="eyebrow" data-i18n="eyebrow">本地动作库</div>
+        <h1 data-i18n="title">Sonic 动作管理器</h1>
+        <p class="subtitle" data-i18n="subtitle">拖入动作 zip 或选择动作文件夹，上传成功后 Sonic 会自动收到热重载请求。</p>
+      </div>
+      <div class="toolbar">
+        <select id="languageSelect" class="lang-select" aria-label="Language">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+        <button class="ghost" onclick="requestReload()" data-i18n="requestReload">请求 Sonic 重载</button>
+        <button class="ghost" onclick="loadMotions()" data-i18n="refresh">刷新列表</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title" data-i18n="uploadTitle">上传动作</h2>
+        </div>
+        <div class="card-body">
+          <div id="dropZone">
+            <div>
+              <div class="drop-icon">⇪</div>
+              <div class="drop-title" data-i18n="dropTitle">拖拽 .zip 到这里</div>
+              <p class="drop-copy" data-i18n="dropCopy">支持 sonic reference zip，也支持下面选择完整动作文件夹。</p>
+            </div>
+          </div>
+
+          <div class="actions">
+            <div class="file-row">
+              <input id="zipInput" type="file" accept=".zip">
+              <button onclick="uploadZip()" data-i18n="uploadZip">上传 zip</button>
+            </div>
+            <div class="file-row">
+              <input id="folderInput" type="file" webkitdirectory multiple>
+              <button onclick="uploadFolder()" data-i18n="uploadFolder">上传文件夹</button>
+            </div>
+          </div>
+
+          <div id="status" class="status-box" data-i18n="ready">准备就绪。</div>
+          <ul class="hint-list">
+            <li data-i18n="hint1">删除动作会先移动到 .trash，不会直接永久删除。</li>
+            <li data-i18n="hint2">页面会写入 .motion_reload_request，运行中的 Sonic 会检测并刷新。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title" data-i18n="motionsTitle">动作列表</h2>
+          <div class="table-tools">
+            <button class="danger" onclick="deleteSelected()" data-i18n="deleteSelected">删除选中</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><input id="selectAll" type="checkbox"></th>
+                <th data-i18n="colName">名称</th>
+                <th data-i18n="colStatus">状态</th>
+                <th data-i18n="colTimesteps">帧数</th>
+                <th data-i18n="colSize">大小</th>
+                <th data-i18n="colModified">修改时间</th>
+              </tr>
+            </thead>
+            <tbody id="motionRows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const translations = {
+      zh: {
+        eyebrow: '本地动作库', title: 'Sonic 动作管理器', subtitle: '拖入动作 zip 或选择动作文件夹，上传成功后 Sonic 会自动收到热重载请求。',
+        requestReload: '请求 Sonic 重载', refresh: '刷新列表', uploadTitle: '上传动作', dropTitle: '拖拽 .zip 到这里', dropCopy: '支持 sonic reference zip，也支持下面选择完整动作文件夹。',
+        uploadZip: '上传 zip', uploadFolder: '上传文件夹', ready: '准备就绪。', hint1: '删除动作会先移动到 .trash，不会直接永久删除。', hint2: '页面会写入 .motion_reload_request，运行中的 Sonic 会检测并刷新。',
+        motionsTitle: '动作列表', deleteSelected: '删除选中', colName: '名称', colStatus: '状态', colTimesteps: '帧数', colSize: '大小', colModified: '修改时间',
+        ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：'
+      },
+      en: {
+        eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
+        requestReload: 'Request Sonic reload', refresh: 'Refresh list', uploadTitle: 'Upload motion', dropTitle: 'Drop a .zip here', dropCopy: 'Supports sonic reference zips and complete motion folders selected below.',
+        uploadZip: 'Upload zip', uploadFolder: 'Upload folder', ready: 'Ready.', hint1: 'Deleted motions are moved to .trash first, not permanently removed.', hint2: 'The page writes .motion_reload_request so the running Sonic process can reload.',
+        motionsTitle: 'Motions', deleteSelected: 'Delete selected', colName: 'Name', colStatus: 'Status', colTimesteps: 'Timesteps', colSize: 'Size', colModified: 'Modified',
+        ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: '
+      }
+    };
+
+    let lang = localStorage.getItem('sonic-motion-lang') || 'zh';
+    let lastMotionData = null;
+    const statusEl = document.getElementById('status');
+    const rowsEl = document.getElementById('motionRows');
+    const dropZone = document.getElementById('dropZone');
+    const languageSelect = document.getElementById('languageSelect');
+    const selectAll = document.getElementById('selectAll');
+
+    function t(key, values = {}) {
+      let text = (translations[lang] && translations[lang][key]) || translations.en[key] || key;
+      for (const [name, value] of Object.entries(values)) text = text.replace(`{${name}}`, value);
+      return text;
+    }
+
+    function applyLanguage(nextLang) {
+      lang = nextLang;
+      localStorage.setItem('sonic-motion-lang', lang);
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+      languageSelect.value = lang;
+      document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+      if (lastMotionData) renderMotions(lastMotionData);
+    }
+
+    function setStatus(message) { statusEl.textContent = message; }
+    function sizeText(bytes) {
+      if (bytes > 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+      if (bytes > 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return bytes + ' B';
+    }
+    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text ?? ''; return div.innerHTML; }
+
+    async function api(path, options) {
+      const response = await fetch(path, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(JSON.stringify(data.detail || data));
+      return data;
+    }
+
+    function renderMotions(data) {
+      lastMotionData = data;
+      rowsEl.innerHTML = '';
+      selectAll.checked = false;
+      if (!data.motions.length) {
+        rowsEl.innerHTML = `<tr><td colspan="6" class="empty">${t('empty')}</td></tr>`;
+        return;
+      }
+      for (const motion of data.motions) {
+        const tr = document.createElement('tr');
+        const badge = motion.valid
+          ? `<span class="badge ok">● ${t('ok')}</span>`
+          : `<span class="badge bad">● ${t('invalid')}</span>`;
+        const errors = motion.valid ? '' : `<div class="error-list">${motion.errors.map(escapeHtml).join('<br>')}</div>`;
+        tr.innerHTML = `
+          <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
+          <td><span class="motion-name">${escapeHtml(motion.name)}</span></td>
+          <td>${badge}${errors}</td>
+          <td>${motion.timesteps ?? ''}</td>
+          <td>${sizeText(motion.size_bytes)}</td>
+          <td class="muted">${escapeHtml(motion.mtime_iso)}</td>`;
+        rowsEl.appendChild(tr);
+      }
+    }
+
+    async function loadMotions() {
+      setStatus(t('loading'));
+      try {
+        const data = await api('/api/motions');
+        renderMotions(data);
+        setStatus(t('motionDir') + data.motion_dir);
+      } catch (err) { setStatus(t('reloadFailed') + err.message); }
+    }
+
+    async function uploadFiles(files) {
+      if (!files.length) return setStatus(t('uploadEmpty'));
+      const form = new FormData();
+      for (const file of files) form.append('files', file, file.webkitRelativePath || file.name);
+      setStatus(t('uploading'));
+      try {
+        const data = await api('/api/motions/upload', { method: 'POST', body: form });
+        setStatus(t('uploaded', { name: data.motion }));
+        await loadMotions();
+      } catch (err) { setStatus(t('uploadFailed') + err.message); }
+    }
+
+    function uploadZip() { uploadFiles(document.getElementById('zipInput').files); }
+    function uploadFolder() { uploadFiles(document.getElementById('folderInput').files); }
+
+    async function requestReload() {
+      try { await api('/api/reload', { method: 'POST' }); setStatus(t('reloadOk')); }
+      catch (err) { setStatus(t('reloadFailed') + err.message); }
+    }
+
+    async function deleteSelected() {
+      const selected = [...rowsEl.querySelectorAll('input:checked')].map(input => input.value);
+      if (!selected.length) return setStatus(t('noSelected'));
+      if (!confirm(t('confirmDelete', { count: selected.length }))) return;
+      try {
+        for (const name of selected) await api('/api/motions/' + encodeURIComponent(name), { method: 'DELETE' });
+        setStatus(t('deleted'));
+        await loadMotions();
+      } catch (err) { setStatus(t('deleteFailed') + err.message); }
+    }
+
+    languageSelect.addEventListener('change', event => applyLanguage(event.target.value));
+    selectAll.addEventListener('change', event => rowsEl.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = event.target.checked; }));
+    dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+    dropZone.addEventListener('drop', event => { event.preventDefault(); dropZone.classList.remove('drag'); uploadFiles(event.dataTransfer.files); });
+
+    applyLanguage(lang);
+    loadMotions();
+  </script>
+</body>
+</html>

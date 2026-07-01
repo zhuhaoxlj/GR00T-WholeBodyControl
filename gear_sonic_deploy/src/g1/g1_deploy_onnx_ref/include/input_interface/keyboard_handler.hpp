@@ -26,7 +26,7 @@
  *   Key | Action
  *   ----|-------
  *   W/S | Move forward / backward
- *   A/D | Adjust-left / adjust-right (slight turn + forward)
+ *   A/D | Stop, stand, rotate 90 deg left/right, then walk forward
  *   ,/. | Strafe left / right
  *   Q/E | Heading left / right (±π/6)
  *   1-8 | Select locomotion mode from current motion set
@@ -55,7 +55,9 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <string>
 #include "input_interface.hpp"
+#include "../foot_trajectory_event.hpp"
 
 /**
  * @class SimpleKeyboard
@@ -93,8 +95,8 @@ class SimpleKeyboard : public InputInterface {
     // Directional movement flags (per-frame, planner mode only)
     bool planner_move_forward = false;     ///< W key pressed this frame.
     bool planner_move_backward = false;    ///< S key pressed this frame.
-    bool planner_move_adj_left = false;    ///< A key – slight left turn + forward.
-    bool planner_move_adj_right = false;   ///< D key – slight right turn + forward.
+    bool planner_move_adj_left = false;    ///< A key - stop, rotate left 90 deg, then forward.
+    bool planner_move_adj_right = false;   ///< D key - stop, rotate right 90 deg, then forward.
     bool planner_move_left = false;        ///< ',' key – strafe left.
     bool planner_move_right = false;       ///< '.' key – strafe right.
     bool planner_heading_left = false;     ///< E key – heading left (−π/6).
@@ -107,6 +109,7 @@ class SimpleKeyboard : public InputInterface {
 
     bool encoder_mode_toggle = false;  ///< Toggle encoder-mode (Z key) this frame.
     bool report_temperature = false;   ///< Print motor temperatures (F key) this frame.
+    bool reload_motions = false;       ///< Reload reference motions (U key) this frame.
 
     // Persistent planner state
     double planner_facing_angle = 0.0;   ///< Accumulated facing direction (radians).
@@ -116,6 +119,13 @@ class SimpleKeyboard : public InputInterface {
     double movement_momentum = 0.0;
     const double momentum_decay_rate = 0.999;  ///< Per-frame multiplicative decay.
     const double momentum_threshold = 0.1;     ///< Below this, transition to IDLE.
+
+    bool turn_walk_sequence_active = false;
+    double turn_walk_start_angle = 0.0;
+    double turn_walk_target_angle = 0.0;
+    std::chrono::steady_clock::time_point turn_walk_start_time{};
+    const std::chrono::milliseconds turn_walk_stop_duration{700};
+    const std::chrono::milliseconds turn_walk_turn_duration{1200};
 
     /**
      * @brief Construct the keyboard handler.
@@ -171,6 +181,7 @@ class SimpleKeyboard : public InputInterface {
       planner_emergency_stop = false;
       encoder_mode_toggle = false;
       report_temperature = false;
+      reload_motions = false;
 
       // Read keyboard input (using shared buffered reading)
       char ch;
@@ -255,6 +266,8 @@ class SimpleKeyboard : public InputInterface {
                 case 'Z': encoder_mode_toggle = true; break; // Toggle encoder mode
                 case 'f':
                 case 'F': report_temperature = true; break; // Report motor temperatures
+                case 'u':
+                case 'U': reload_motions = true; break; // Reload reference motions
             }
 
             // Limit movement speed and height to the range of the movement mode
@@ -317,10 +330,18 @@ class SimpleKeyboard : public InputInterface {
             case 'Z': encoder_mode_toggle = true; break; // Toggle encoder mode
             case 'h':
             case 'H': report_temperature = true; break; // Report motor temperatures
+            case 'u':
+            case 'U': reload_motions = true; break; // Reload reference motions
           }
         }
         
       }
+    }
+
+    bool ConsumeReloadMotionsRequest() override {
+      bool requested = reload_motions;
+      reload_motions = false;
+      return requested;
     }
 
     // Override the handle_input function from InputInterface
@@ -407,14 +428,22 @@ class SimpleKeyboard : public InputInterface {
 
       if (this->play_motion) {
           if (!operator_state.play) {
+              std::string motion_name;
               int frame_copy;
               size_t timesteps_copy;
               {
                 std::lock_guard<std::mutex> lock(current_motion_mutex);
                 operator_state.play = true;
+                motion_name = current_motion ? current_motion->name : "unknown_motion";
                 frame_copy = current_frame;
                 timesteps_copy = current_motion ? current_motion->timesteps : 0;
               }
+              FootTrajectoryEvent::WriteEvent(
+                  "start",
+                  motion_name,
+                  motion_reader.current_motion_index_,
+                  frame_copy,
+                  static_cast<int>(timesteps_copy));
               std::cout << "Playing motion " << motion_reader.current_motion_index_ << " from frame " << frame_copy << " to end ("
                         << timesteps_copy << " total frames)" << std::endl;
           }
@@ -540,6 +569,7 @@ class SimpleKeyboard : public InputInterface {
           // Handle emergency stop (immediate momentum reset)
           if (this->planner_emergency_stop) {
               movement_momentum = 0.0;
+              turn_walk_sequence_active = false;
               std::cout << "Emergency Stop! Movement momentum reset." << std::endl;
           }
           
@@ -581,27 +611,25 @@ class SimpleKeyboard : public InputInterface {
               movement_momentum = 1.0;  // Full momentum
               movement_key_pressed = true;
           }
-          if (this->planner_move_adj_left && !is_static_motion_mode(planner_use_movement_mode)) {
-              planner_facing_angle += 0.1;
-              local_facing_direction[0] = cos(planner_facing_angle);
-              local_facing_direction[1] = sin(planner_facing_angle);
-              local_facing_direction[2] = 0.0f;
-              local_target_movement[0] = local_facing_direction[0];
-              local_target_movement[1] = local_facing_direction[1];
-              local_target_movement[2] = 0.0f;
-              movement_momentum = 1.0;  // Full momentum
+          if (this->planner_move_adj_left && !is_static_motion_mode(planner_use_movement_mode) &&
+              !turn_walk_sequence_active) {
+              turn_walk_start_angle = planner_facing_angle;
+              turn_walk_target_angle = planner_facing_angle + M_PI / 2.0;
+              turn_walk_start_time = std::chrono::steady_clock::now();
+              turn_walk_sequence_active = true;
+              movement_momentum = 0.0;
               movement_key_pressed = true;
+              std::cout << "Turn-walk sequence: stop, rotate left 90 deg, then forward" << std::endl;
           }
-          if (this->planner_move_adj_right && !is_static_motion_mode(planner_use_movement_mode)) {
-              planner_facing_angle -= 0.1;
-              local_facing_direction[0] = cos(planner_facing_angle);
-              local_facing_direction[1] = sin(planner_facing_angle);
-              local_facing_direction[2] = 0.0f;
-              local_target_movement[0] = local_facing_direction[0];
-              local_target_movement[1] = local_facing_direction[1];
-              local_target_movement[2] = 0.0f;
-              movement_momentum = 1.0;  // Full momentum
+          if (this->planner_move_adj_right && !is_static_motion_mode(planner_use_movement_mode) &&
+              !turn_walk_sequence_active) {
+              turn_walk_start_angle = planner_facing_angle;
+              turn_walk_target_angle = planner_facing_angle - M_PI / 2.0;
+              turn_walk_start_time = std::chrono::steady_clock::now();
+              turn_walk_sequence_active = true;
+              movement_momentum = 0.0;
               movement_key_pressed = true;
+              std::cout << "Turn-walk sequence: stop, rotate right 90 deg, then forward" << std::endl;
           }
           if (this->planner_move_left && !is_static_motion_mode(planner_use_movement_mode)) {
               local_target_movement[0] = -sin(planner_facing_angle);
@@ -624,6 +652,37 @@ class SimpleKeyboard : public InputInterface {
           // Apply momentum decay if no movement key is pressed
           if (!movement_key_pressed) {
               movement_momentum *= momentum_decay_rate;
+          }
+
+          if (turn_walk_sequence_active && !is_static_motion_mode(planner_use_movement_mode)) {
+              auto elapsed = std::chrono::steady_clock::now() - turn_walk_start_time;
+              movement_key_pressed = true;
+
+              if (elapsed < turn_walk_stop_duration) {
+                  planner_facing_angle = turn_walk_start_angle;
+                  movement_momentum = 0.0;
+                  local_target_movement = {0.0f, 0.0f, 0.0f};
+              } else if (elapsed < turn_walk_stop_duration + turn_walk_turn_duration) {
+                  auto turn_elapsed = elapsed - turn_walk_stop_duration;
+                  double alpha = static_cast<double>(turn_elapsed.count()) /
+                                 static_cast<double>(turn_walk_turn_duration.count());
+                  planner_facing_angle = turn_walk_start_angle +
+                                         (turn_walk_target_angle - turn_walk_start_angle) * alpha;
+                  movement_momentum = 0.0;
+                  local_target_movement = {0.0f, 0.0f, 0.0f};
+              } else {
+                  planner_facing_angle = turn_walk_target_angle;
+                  movement_momentum = 1.0;
+                  turn_walk_sequence_active = false;
+              }
+
+              local_facing_direction[0] = cos(planner_facing_angle);
+              local_facing_direction[1] = sin(planner_facing_angle);
+              local_facing_direction[2] = 0.0f;
+
+              if (movement_momentum > 0.0) {
+                  local_target_movement = local_facing_direction;
+              }
           }
           
           // Set final movement values based on momentum

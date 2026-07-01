@@ -62,6 +62,8 @@
 #include <unordered_map>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
+#include <optional>
 #include <chrono>
 #include <algorithm>
 #include <numeric>
@@ -84,6 +86,8 @@
 
 // Motion Data Reader
 #include "../include/motion_data_reader.hpp"
+#include "../include/motion_catalog.hpp"
+#include "../include/foot_trajectory_event.hpp"
 
 // Math utilities
 #include "../include/math_utils.hpp"
@@ -115,6 +119,7 @@
 
 // Optional ROS2 input handler
 #if HAS_ROS2
+#include "../include/command_interface/ros2_command_handler.hpp"
 #include "../include/input_interface/ros2_input_handler.hpp"
 #include "../include/output_interface/ros2_output_handler.hpp"
 #endif
@@ -208,12 +213,24 @@ class G1Deploy {
     // =========================================================================
     // Motion data reader and current motion
     MotionDataReader motion_reader_;
+    MotionCatalog motion_catalog_;
+    std::string motion_data_path_;
+    std::string motion_catalog_path_;
+    std::filesystem::path motion_reload_flag_path_;
+    std::optional<std::filesystem::file_time_type> last_motion_reload_flag_mtime_;
+    std::chrono::steady_clock::time_point last_motion_reload_check_{};
+    static constexpr std::chrono::milliseconds MOTION_RELOAD_CHECK_INTERVAL{500};
     
-    // Current motion and frame (using shared_ptr for thread safety)
+    // current_motion_mutex_ protects motion_reader_.motions/current_motion_index_,
+    // current_motion_, and current_frame_ during motion switches and hot reloads.
     std::shared_ptr<const MotionSequence> current_motion_ = nullptr;
     int current_frame_ = 0;
     int saved_frame_for_observation_window_ = 0; // for observation window
-    std::mutex current_motion_mutex_; // for current motion and frame synchronization
+    std::mutex current_motion_mutex_;
+
+#if HAS_ROS2
+    std::unique_ptr<ROS2CommandHandler> ros2_command_handler_;
+#endif
     
     // =========================================================================
     // Local motion planner and movement state
@@ -2126,6 +2143,198 @@ class G1Deploy {
       return false;
     }
 
+    std::string ResolveMotionCatalogPath(const std::string& requested_catalog_path,
+                                         const std::string& motion_data_path) const {
+      if (!requested_catalog_path.empty()) { return requested_catalog_path; }
+      std::filesystem::path default_catalog = std::filesystem::path(motion_data_path) / "motion_catalog.yaml";
+      if (std::filesystem::exists(default_catalog)) { return default_catalog.string(); }
+      return "";
+    }
+
+    bool LoadMotionData(const std::string& motion_data_path, const std::string& motion_catalog_path) {
+      std::string resolved_catalog_path = this->ResolveMotionCatalogPath(motion_catalog_path, motion_data_path);
+      if (!resolved_catalog_path.empty()) {
+        if (!this->motion_catalog_.LoadFromYaml(resolved_catalog_path)) { return false; }
+        this->motion_reader_.motions.clear();
+        this->motion_reader_.current_motion_index_ = 0;
+        auto& entries = this->motion_catalog_.Entries();
+        for (size_t i = 0; i < entries.size(); ++i) {
+          if (!entries[i].enabled) { continue; }
+          int next_motion_index = static_cast<int>(this->motion_reader_.motions.size());
+          if (this->motion_reader_.ReadMotionDirectory(entries[i].resolved_path, entries[i].id)) {
+            this->motion_catalog_.BindMotionIndex(i, next_motion_index);
+          }
+        }
+        return !this->motion_reader_.motions.empty();
+      }
+
+      bool loaded = this->motion_reader_.ReadFromCSV(motion_data_path);
+      if (loaded) { this->motion_catalog_.BuildFromLoadedMotions(this->motion_reader_.motions); }
+      return loaded;
+    }
+
+    bool LoadMotionDataInto(MotionDataReader& reader,
+                            MotionCatalog& catalog,
+                            const std::string& motion_data_path,
+                            const std::string& motion_catalog_path) const {
+      std::string resolved_catalog_path = this->ResolveMotionCatalogPath(motion_catalog_path, motion_data_path);
+      if (!resolved_catalog_path.empty()) {
+        if (!catalog.LoadFromYaml(resolved_catalog_path)) { return false; }
+        reader.motions.clear();
+        reader.current_motion_index_ = 0;
+        auto& entries = catalog.Entries();
+        for (size_t i = 0; i < entries.size(); ++i) {
+          if (!entries[i].enabled) { continue; }
+          int next_motion_index = static_cast<int>(reader.motions.size());
+          if (reader.ReadMotionDirectory(entries[i].resolved_path, entries[i].id)) {
+            catalog.BindMotionIndex(i, next_motion_index);
+          }
+        }
+        return !reader.motions.empty();
+      }
+
+      bool loaded = reader.ReadFromCSV(motion_data_path);
+      if (loaded) { catalog.BuildFromLoadedMotions(reader.motions); }
+      return loaded;
+    }
+
+    void ApplyEncodeModeToReferenceMotions(MotionDataReader& reader) const {
+      for (auto& motion : reader.motions) {
+        if (motion) { motion->SetEncodeMode(initial_encoder_mode_); }
+      }
+    }
+
+    int FindMotionIndexByName(const MotionDataReader& reader, const std::string& name) const {
+      if (name.empty()) { return -1; }
+      for (size_t i = 0; i < reader.motions.size(); ++i) {
+        if (reader.motions[i] && reader.motions[i]->name == name) {
+          return static_cast<int>(i);
+        }
+      }
+      return -1;
+    }
+
+    bool ReloadMotionData(const std::string& reason) {
+      if (motion_data_path_.empty()) {
+        std::cerr << "[MotionReload] Motion data path is empty; reload skipped" << std::endl;
+        return false;
+      }
+
+      std::string previous_motion_name;
+      int previous_index = 0;
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        previous_index = motion_reader_.current_motion_index_;
+        if (current_motion_) { previous_motion_name = current_motion_->name; }
+      }
+
+      MotionDataReader new_reader;
+      MotionCatalog new_catalog;
+      if (!LoadMotionDataInto(new_reader, new_catalog, motion_data_path_, motion_catalog_path_) || new_reader.motions.empty()) {
+        std::cerr << "[MotionReload] Failed to reload valid motions from " << motion_data_path_
+                  << " (reason: " << reason << "). Keeping existing motions." << std::endl;
+        return false;
+      }
+      ApplyEncodeModeToReferenceMotions(new_reader);
+
+      int new_index = FindMotionIndexByName(new_reader, previous_motion_name);
+      if (new_index < 0) {
+        new_index = std::clamp(previous_index, 0, static_cast<int>(new_reader.motions.size()) - 1);
+      }
+
+      std::shared_ptr<const MotionSequence> selected_motion = new_reader.GetMotionShared(static_cast<size_t>(new_index));
+      if (!selected_motion) {
+        std::cerr << "[MotionReload] Reloaded motion index is invalid; keeping existing motions" << std::endl;
+        return false;
+      }
+
+      movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                   {0.0f, 0.0f, 0.0f},
+                                                   {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+      if (planner_) {
+        planner_->planner_state_.enabled = false;
+        planner_->planner_state_.initialized = false;
+      }
+      if (planner_motion_) { planner_motion_->timesteps = 0; }
+
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        motion_reader_ = std::move(new_reader);
+        motion_catalog_ = std::move(new_catalog);
+        motion_reader_.current_motion_index_ = new_index;
+        current_motion_ = selected_motion;
+        current_frame_ = 0;
+        saved_frame_for_observation_window_ = 0;
+        operator_state.play = false;
+        reinitialize_heading_ = true;
+      }
+
+      std::cout << "[MotionReload] Reloaded " << motion_reader_.motions.size()
+                << " motions from " << motion_data_path_
+                << " (reason: " << reason << "). Current: "
+                << selected_motion->name << " (paused at frame 0)" << std::endl;
+      return true;
+    }
+
+    bool CheckMotionReloadFlag() {
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_motion_reload_check_ < MOTION_RELOAD_CHECK_INTERVAL) { return false; }
+      last_motion_reload_check_ = now;
+      if (motion_reload_flag_path_.empty()) { return false; }
+
+      std::error_code ec;
+      if (!std::filesystem::exists(motion_reload_flag_path_, ec) || ec) { return false; }
+      auto mtime = std::filesystem::last_write_time(motion_reload_flag_path_, ec);
+      if (ec) { return false; }
+      if (!last_motion_reload_flag_mtime_.has_value()) {
+        last_motion_reload_flag_mtime_ = mtime;
+        return true;
+      }
+      if (mtime != last_motion_reload_flag_mtime_.value()) {
+        last_motion_reload_flag_mtime_ = mtime;
+        return true;
+      }
+      return false;
+    }
+
+    bool SelectMotionFromCatalog(const std::string& request) {
+      int motion_index = -1;
+      MotionCatalogEntry entry;
+      if (!this->motion_catalog_.Resolve(request, motion_index, entry)) {
+        std::cerr << "[GlobalCommand] Motion request not found or disabled: " << request << std::endl;
+        return false;
+      }
+
+      auto selected_motion = this->motion_reader_.GetMotionShared(static_cast<size_t>(motion_index));
+      if (!selected_motion) {
+        std::cerr << "[GlobalCommand] Resolved motion index is invalid: " << motion_index << std::endl;
+        return false;
+      }
+
+      this->movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                         {0.0f, 0.0f, 0.0f},
+                                                         {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+      if (this->planner_) {
+        this->planner_->planner_state_.enabled = false;
+        this->planner_->planner_state_.initialized = false;
+      }
+      if (this->planner_motion_) { this->planner_motion_->timesteps = 0; }
+
+      {
+        std::lock_guard<std::mutex> lock(this->current_motion_mutex_);
+        this->motion_reader_.current_motion_index_ = motion_index;
+        this->current_motion_ = selected_motion;
+        this->current_frame_ = 0;
+        this->reinitialize_heading_ = true;
+        this->operator_state.start = true;
+        this->operator_state.play = true;
+      }
+
+      std::cout << "[GlobalCommand] Playing motion '" << entry.id << "' (" << entry.display_name
+                << ") from frame 0" << std::endl;
+      return true;
+    }
+
 
 
   public:
@@ -2159,7 +2368,8 @@ class G1Deploy {
       std::string zmq_out_topic = "g1_debug",
       bool enable_motion_recording = false,
       std::array<double, 3> initial_compliance = {0.05, 0.05, 0.0},
-      double initial_max_close_ratio = 1.0)
+      double initial_max_close_ratio = 1.0,
+      std::string motion_catalog_path = "")
       : time_(0.0),
         publish_dt_(0.002),
         control_dt_(0.02),
@@ -2188,6 +2398,15 @@ class G1Deploy {
       dex3_hands_.initialize("");
 
       audio_thread_ = std::make_unique<AudioThread>();
+
+      motion_data_path_ = motion_data_path;
+      motion_catalog_path_ = motion_catalog_path;
+      motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
+      last_motion_reload_check_ = std::chrono::steady_clock::now();
+      std::error_code reload_flag_error;
+      if (std::filesystem::exists(motion_reload_flag_path_, reload_flag_error) && !reload_flag_error) {
+        last_motion_reload_flag_mtime_ = std::filesystem::last_write_time(motion_reload_flag_path_, reload_flag_error);
+      }
 
       if(!target_motion_file_path.empty())
       {
@@ -2263,7 +2482,7 @@ class G1Deploy {
       imutorso_subscriber_.reset(new ChannelSubscriber<IMUState_>(HG_IMU_TORSO));
       imutorso_subscriber_->InitChannel(std::bind(&G1Deploy::imuTorsoHandler, this, std::placeholders::_1), 1);
       // Load motion data
-      if (motion_reader_.ReadFromCSV(motion_data_path)) {
+      if (this->LoadMotionData(motion_data_path, motion_catalog_path)) {
         if (!motion_reader_.motions.empty()) {
           std::cout << "✓ Motion data loaded successfully!" << std::endl;
           // motion_reader_.PrintSummary();
@@ -2426,6 +2645,7 @@ class G1Deploy {
       std::map<std::string, std::variant<std::string, int, double, bool>> robot_config;
       robot_config["model_path"] = model_path;
       robot_config["reference_motion_path"] = motion_data_path;
+      robot_config["motion_catalog_path"] = motion_catalog_path.empty() ? "none" : motion_catalog_path;
       robot_config["planner_path"] = planner_path.empty() ? "none" : planner_path;
       robot_config["obs_config_path"] = obs_config_path.empty() ? "none" : obs_config_path;
       robot_config["encoder_file"] = encoder_file_path.empty() ? "none" : encoder_file_path;
@@ -2542,7 +2762,12 @@ class G1Deploy {
           std::cout << "│  Policy observes 'vr_3point_compliance'. Keyboard controls (g/h/b/v) work.  │" << std::endl;
           std::cout << "└─────────────────────────────────────────────────────────────────────────────┘\n" << std::endl;
         }
-      }
+        }
+
+#if HAS_ROS2
+      this->ros2_command_handler_ = std::make_unique<ROS2CommandHandler>("g1_global_command_handler");
+      this->ros2_command_handler_->PublishMotionCatalog(this->motion_catalog_.ToJson());
+#endif
 
       // Initialize output interfaces based on type (now that state_logger_ is ready)
       // Supports multiple simultaneous outputs with --output-type all
@@ -3380,6 +3605,12 @@ class G1Deploy {
           if (current_frame_ >= current_motion_->timesteps) {
             operator_state.play = false;
             if (current_motion_ ->name != "temporary_motion") {
+              FootTrajectoryEvent::WriteEvent(
+                  "end",
+                  current_motion_->name,
+                  motion_reader_.current_motion_index_,
+                  current_frame_,
+                  current_motion_->timesteps);
               std::cout << "______________________________________________________" << std::endl;
               std::cout << "Motion index: " << motion_reader_.current_motion_index_ << " : " << current_motion_->name << " completed." << std::endl;
               std::cout << "______________________________________________________" << std::endl;
@@ -3411,10 +3642,32 @@ class G1Deploy {
      * 4. Optionally records / plays back input state for offline replay.
      */
     void Input() {
-      if (operator_state.stop) { return; }
-      
+      if (this->operator_state.stop) { return; }
+
+#if HAS_ROS2
+      if (this->ros2_command_handler_) {
+        this->ros2_command_handler_->Update();
+        if (this->ros2_command_handler_->ConsumeEmergencyStop()) {
+          std::cout << "[GlobalCommand] Emergency stop consumed by input thread" << std::endl;
+          this->operator_state.stop = true;
+          return;
+        }
+        std::string motion_request;
+        if (this->ros2_command_handler_->ConsumeSelectMotion(motion_request)) {
+          this->SelectMotionFromCatalog(motion_request);
+        }
+      }
+#endif
+
       // Update input interface (poll for new data)
       input_interface_->update();
+
+      if (input_interface_->ConsumeReloadMotionsRequest()) {
+        this->ReloadMotionData("keyboard");
+      }
+      if (this->CheckMotionReloadFlag()) {
+        this->ReloadMotionData("reload flag");
+      }
       
       // Handle input using the interface - input handler updates everything directly
       const std::shared_ptr<const LowState_> low_state_data = low_state_buffer_.GetDataWithTime().data;
@@ -4118,6 +4371,7 @@ int main(int argc, char const* argv[]) {
     std::cout << "  --policy-input-logfile <path>: write policy input tensors to a csv file if provided" << std::endl;
     std::cout << "  --disable-crc-check: disable CRC validation for MuJoCo simulation" << std::endl;
     std::cout << "  --obs-config <path>: specify observation configuration YAML file" << std::endl;
+    std::cout << "  --motion-catalog <path>: specify optional YAML catalog for selectable motions" << std::endl;
     std::cout << "  --encoder-file <path>: specify encoder ONNX file (optional)" << std::endl;
     std::cout << "  --planner-precision <16|32>: specify precision to run the planner model at (default: 16)" << std::endl;
     std::cout << "  --policy-precision <16|32>: specify precision to run the policy model at (default: 32)" << std::endl;
@@ -4154,6 +4408,7 @@ int main(int argc, char const* argv[]) {
   std::string modelFile = argv[2];
   std::string motionDataPath = argv[3];
   std::string plannerFile = "";
+  std::string motionCatalogPath = "";
 
   // Parse optional arguments
   bool disableCrcCheck = false;\
@@ -4191,6 +4446,15 @@ int main(int argc, char const* argv[]) {
         i++; // Skip the next argument since it's the config path
       } else {
         std::cerr << "Error: --obs-config requires a path argument" << std::endl;
+        exit(1);
+      }
+    } else if (std::string(argv[i]) == "--motion-catalog") {
+      if (i + 1 < argc) {
+        motionCatalogPath = argv[i + 1];
+        std::cout << "[INFO] Using motion catalog: " << motionCatalogPath << std::endl;
+        i++;
+      } else {
+        std::cerr << "Error: --motion-catalog requires a path argument" << std::endl;
         exit(1);
       }
     } else if (std::string(argv[i]) == "--encoder-file") {
@@ -4441,22 +4705,15 @@ int main(int argc, char const* argv[]) {
     zmq_out_topic,
     enableMotionRecording,
     initial_compliance,
-    initial_max_close_ratio
+    initial_max_close_ratio,
+    motionCatalogPath
   );
   std::cout << "[DEBUG] G1Deploy object created successfully!" << std::endl;
   
   // Main application loop - check both operator_state.stop and ROS2 status if using ROS2
 #if HAS_ROS2
-  if (inputType == "ros2") {
-    while (!custom.operator_state.stop && rclcpp::ok()) { 
-      sleep(0.02); 
-    }
-    if (!rclcpp::ok()) {
-      std::cout << "[INFO] ROS2 shutdown detected (Ctrl+C)" << std::endl;
-    }
-  } else {
-    while (!custom.operator_state.stop) { sleep(0.02); }
-  }
+  while (!custom.operator_state.stop && rclcpp::ok()) { sleep(0.02); }
+  if (!rclcpp::ok()) { std::cout << "[INFO] ROS2 shutdown detected (Ctrl+C)" << std::endl; }
 #else
   while (!custom.operator_state.stop) { sleep(0.02); }
 #endif
@@ -4468,4 +4725,3 @@ int main(int argc, char const* argv[]) {
   std::cout << "[DEBUG] Program exiting normally..." << std::endl;
   return 0;
 }
-

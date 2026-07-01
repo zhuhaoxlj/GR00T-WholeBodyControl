@@ -1,0 +1,21 @@
+# Example catalog for ROS2-selectable reference motions.
+# Paths are motion directories containing the existing CSV bundle
+# (metadata.txt, joint_pos.csv, body_pos.csv, etc.), not individual CSV files.
+version: 1
+
+motions:
+  - id: squat
+    display_name: Squat
+    path: ../../../../reference/example/squat_001__A359
+    enabled: true
+    aliases:
+      - s1
+      - demo_squat
+
+  - id: custom_dance
+    display_name: jimo
+    path: ../../../../reference/self/jimo
+    enabled: true
+    aliases:
+      - d1
+      - dance_customd

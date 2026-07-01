@@ -208,6 +208,7 @@ show_usage() {
     echo "  --obs-config PATH       Set the observation config file (default: policy/configs/example.yaml)"
     echo "  --planner PATH          Set the planner model path (default: planner/example.onnx)"
     echo "  --motion-data PATH      Set the motion data path (default: reference/example_motion/)"
+    echo "  --motion-catalog PATH   Set optional YAML motion catalog path"
     echo "  --input-type TYPE       Set the input type (default: zmq_manager)"
     echo "  --output-type TYPE      Set the output type (default: ros2)"
     echo "  --zmq-host HOST         Set the ZMQ host (default: localhost)"
@@ -239,6 +240,7 @@ CHECKPOINT_DEFAULT="policy/release/model"
 OBS_CONFIG_DEFAULT="policy/release/observation_config.yaml"
 PLANNER_DEFAULT="planner/target_vel/V2/planner_sonic.onnx"
 MOTION_DATA_DEFAULT="reference/example/"
+MOTION_CATALOG_DEFAULT=""
 INPUT_TYPE_DEFAULT="manager"
 OUTPUT_TYPE_DEFAULT="all"
 ZMQ_HOST_DEFAULT="localhost"
@@ -248,6 +250,7 @@ CHECKPOINT="$CHECKPOINT_DEFAULT"
 OBS_CONFIG="$OBS_CONFIG_DEFAULT"
 PLANNER="$PLANNER_DEFAULT"
 MOTION_DATA="$MOTION_DATA_DEFAULT"
+MOTION_CATALOG="$MOTION_CATALOG_DEFAULT"
 INPUT_TYPE="$INPUT_TYPE_DEFAULT"
 OUTPUT_TYPE="$OUTPUT_TYPE_DEFAULT"
 ZMQ_HOST="$ZMQ_HOST_DEFAULT"
@@ -289,6 +292,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             MOTION_DATA="$2"
+            shift 2
+            ;;
+        --motion-catalog)
+            if [[ -z "$2" ]]; then
+                echo -e "${RED}Error: --motion-catalog requires a path argument${NC}" >&2
+                exit 1
+            fi
+            MOTION_CATALOG="$2"
             shift 2
             ;;
         --input-type)
@@ -510,6 +521,9 @@ echo -e "  Network Interface:  ${GREEN}$TARGET${NC}"
 echo -e "  Decoder Model:      ${GREEN}$CHECKPOINT_DECODER${NC}"
 echo -e "  Encoder Model:      ${GREEN}$CHECKPOINT_ENCODER${NC}"
 echo -e "  Motion Data:        ${GREEN}$MOTION_DATA${NC}"
+if [[ -n "$MOTION_CATALOG" ]]; then
+echo -e "  Motion Catalog:     ${GREEN}$MOTION_CATALOG${NC}"
+fi
 echo -e "  Obs Config:         ${GREEN}$OBS_CONFIG${NC}"
 echo -e "  Planner:            ${GREEN}$PLANNER${NC}"
 echo -e "  Input Type:         ${GREEN}$INPUT_TYPE${NC}"
@@ -527,6 +541,9 @@ echo -e "${BLUE}just run g1_deploy_onnx_ref $TARGET $CHECKPOINT_DECODER $MOTION_
 echo -e "${BLUE}    --obs-config $OBS_CONFIG \\${NC}"
 echo -e "${BLUE}    --encoder-file $CHECKPOINT_ENCODER \\${NC}"
 echo -e "${BLUE}    --planner-file $PLANNER \\${NC}"
+if [[ -n "$MOTION_CATALOG" ]]; then
+echo -e "${BLUE}    --motion-catalog $MOTION_CATALOG \\${NC}"
+fi
 echo -e "${BLUE}    --input-type $INPUT_TYPE \\${NC}"
 echo -e "${BLUE}    --output-type $OUTPUT_TYPE \\${NC}"
 echo -e "${BLUE}    --zmq-host $ZMQ_HOST${NC}"
@@ -552,11 +569,17 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
     echo ""
     
     # Build the command with optional extra args
+    MOTION_CATALOG_ARGS=()
+    if [[ -n "$MOTION_CATALOG" ]]; then
+        MOTION_CATALOG_ARGS=(--motion-catalog "$MOTION_CATALOG")
+    fi
+
     if [[ -n "$EXTRA_ARGS" ]]; then
         just run g1_deploy_onnx_ref "$TARGET" "$CHECKPOINT_DECODER" "$MOTION_DATA" \
             --obs-config "$OBS_CONFIG" \
             --encoder-file "$CHECKPOINT_ENCODER" \
             --planner-file "$PLANNER" \
+            "${MOTION_CATALOG_ARGS[@]}" \
             --input-type "$INPUT_TYPE" \
             --output-type "$OUTPUT_TYPE" \
             --zmq-host "$ZMQ_HOST" \
@@ -566,6 +589,7 @@ if [[ "$confirm" =~ ^[Yy]$ ]] || [[ -z "$confirm" ]]; then
             --obs-config "$OBS_CONFIG" \
             --encoder-file "$CHECKPOINT_ENCODER" \
             --planner-file "$PLANNER" \
+            "${MOTION_CATALOG_ARGS[@]}" \
             --input-type "$INPUT_TYPE" \
             --output-type "$OUTPUT_TYPE" \
             --zmq-host "$ZMQ_HOST"

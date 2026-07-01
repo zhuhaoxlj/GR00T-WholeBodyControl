@@ -1,0 +1,4 @@
+[submodule "external_dependencies/soma-retargeter"]
+	path = external_dependencies/soma-retargeter
+	url = https://github.com/NVIDIA/soma-retargeter.git
+	ignore = untracked
