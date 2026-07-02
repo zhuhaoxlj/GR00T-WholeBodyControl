@@ -49,6 +49,8 @@ EXPECTED_COLUMNS = {
     "body_ang_vel.csv": 42,
 }
 MOTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+MOTION_ALIAS_FILE = MOTION_DIR / ".motion_aliases.json"
+MOTION_ALIAS_MAX_LENGTH = 80
 
 PLANNER_MODE_GROUPS = [
     {"name": "standing", "display_name": "站立/行走", "actions": [
@@ -99,6 +101,46 @@ def safe_motion_name(name: str) -> str:
     if not MOTION_NAME_RE.fullmatch(cleaned):
         raise HTTPException(status_code=400, detail=f"Invalid motion name: {name!r}")
     return cleaned
+
+
+def clean_motion_alias(alias: str | None) -> str | None:
+    if alias is None:
+        return None
+    cleaned = " ".join(alias.strip().split())
+    if not cleaned:
+        return None
+    if len(cleaned) > MOTION_ALIAS_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Motion alias must be <= {MOTION_ALIAS_MAX_LENGTH} characters",
+        )
+    return cleaned
+
+
+def read_motion_aliases() -> dict[str, str]:
+    try:
+        data = json.loads(MOTION_ALIAS_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if isinstance(value, str)}
+
+
+def write_motion_aliases(aliases: dict[str, str]) -> None:
+    ensure_motion_dir()
+    MOTION_ALIAS_FILE.write_text(
+        json.dumps(aliases, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def set_motion_alias(motion_name: str, alias: str | None) -> None:
+    aliases = read_motion_aliases()
+    if alias:
+        aliases[motion_name] = alias
+    else:
+        aliases.pop(motion_name, None)
+    write_motion_aliases(aliases)
 
 
 def assert_under_motion_dir(path: Path) -> Path:
@@ -392,11 +434,14 @@ def sonic_status() -> dict:
 @app.get("/api/motions")
 def list_motions() -> dict:
     motions = []
+    aliases = read_motion_aliases()
     for path in iter_motion_dirs():
         validation = validate_motion_dir(path, strict=False)
         stat = path.stat()
         motions.append({
             "name": path.name,
+            "alias": aliases.get(path.name),
+            "display_name": aliases.get(path.name) or path.name,
             "valid": validation["valid"],
             "errors": validation["errors"],
             "timesteps": validation["metadata_timesteps"] or next(iter(validation["rows"].values()), None),
@@ -414,7 +459,11 @@ def request_reload() -> dict:
 
 
 @app.post("/api/motions/upload")
-async def upload_motion(files: list[UploadFile] = File(...), motion_name: str | None = Form(default=None)) -> dict:
+async def upload_motion(
+    files: list[UploadFile] = File(...),
+    motion_name: str | None = Form(default=None),
+    motion_alias: str | None = Form(default=None),
+) -> dict:
     ensure_motion_dir()
     tmp_root = MOTION_DIR / ".upload_tmp" / uuid.uuid4().hex
     tmp_root.mkdir(parents=True)
@@ -456,8 +505,11 @@ async def upload_motion(files: list[UploadFile] = File(...), motion_name: str | 
         if not validation["valid"]:
             raise HTTPException(status_code=400, detail={"errors": validation["errors"]})
         shutil.move(str(source_root), str(target_dir))
+        clean_alias = clean_motion_alias(motion_alias)
+        if clean_alias:
+            set_motion_alias(final_name, clean_alias)
         touch_reload_flag()
-        return {"ok": True, "motion": final_name, "validation": validation}
+        return {"ok": True, "motion": final_name, "alias": clean_alias, "validation": validation}
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
 
@@ -472,5 +524,6 @@ def delete_motion(name: str) -> dict:
     trash_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{motion_name}"
     target = assert_under_motion_dir(MOTION_DIR / ".trash" / trash_name)
     shutil.move(str(source), str(target))
+    set_motion_alias(motion_name, None)
     touch_reload_flag()
     return {"ok": True, "motion": motion_name, "trash": str(target)}

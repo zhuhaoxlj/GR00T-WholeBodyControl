@@ -135,6 +135,41 @@
       border: 1px solid var(--line);
       min-height: 46px;
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      place-items: center;
+      padding: 20px;
+      background: rgba(2, 6, 23, 0.72);
+      backdrop-filter: blur(10px);
+    }
+    .modal-backdrop.open { display: grid; }
+    .modal {
+      width: min(480px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .modal-header { padding: 18px 20px 8px; }
+    .modal-title { margin: 0; font-size: 20px; }
+    .modal-copy { margin: 8px 0 0; color: var(--muted); line-height: 1.55; font-size: 14px; }
+    .modal-body { padding: 14px 20px 20px; }
+    .modal-input {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid rgba(147, 197, 253, 0.28);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.86);
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+    }
+    .modal-input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.14); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
     .hint-list { margin: 18px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; font-size: 14px; }
 
     .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
@@ -305,6 +340,22 @@
     </section>
   </main>
 
+  <div id="aliasModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="aliasModalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="aliasModalTitle" class="modal-title" data-i18n="aliasTitle">给动作起一个显示别名</h2>
+        <p class="modal-copy" data-i18n="aliasCopy">这个别名只用于页面显示，不会改变动作文件夹名。</p>
+      </div>
+      <div class="modal-body">
+        <input id="aliasInput" class="modal-input" type="text" maxlength="80" autocomplete="off">
+        <div class="modal-actions">
+          <button id="aliasCancelBtn" class="secondary" type="button" data-i18n="cancel">取消</button>
+          <button id="aliasConfirmBtn" type="button" data-i18n="confirmUpload">确认上传</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const translations = {
       zh: {
@@ -314,7 +365,8 @@
         motionsTitle: '动作列表', deleteSelected: '删除选中', colName: '名称', colStatus: '状态', colTimesteps: '帧数', colSize: '大小', colModified: '修改时间',
         ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：',
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
-        commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位'
+        commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位',
+        aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -323,19 +375,26 @@
         motionsTitle: 'Motions', deleteSelected: 'Delete selected', colName: 'Name', colStatus: 'Status', colTimesteps: 'Timesteps', colSize: 'Size', colModified: 'Modified',
         ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: ',
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
-        commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons'
+        commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons',
+        aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.'
       }
     };
 
     let lang = localStorage.getItem('sonic-motion-lang') || 'zh';
     let lastMotionData = null;
     let lastSonicStatus = null;
+    let motionAliases = {};
+    let pendingAliasResolve = null;
     let controlScheme = localStorage.getItem('sonic-control-scheme') || 'keyboard';
     const statusEl = document.getElementById('status');
     const rowsEl = document.getElementById('motionRows');
     const sonicSectionsEl = document.getElementById('sonicModeSections');
     const controlGuideEl = document.getElementById('controlGuide');
     const dropZone = document.getElementById('dropZone');
+    const aliasModal = document.getElementById('aliasModal');
+    const aliasInput = document.getElementById('aliasInput');
+    const aliasCancelBtn = document.getElementById('aliasCancelBtn');
+    const aliasConfirmBtn = document.getElementById('aliasConfirmBtn');
     const languageSelect = document.getElementById('languageSelect');
     const selectAll = document.getElementById('selectAll');
 
@@ -351,6 +410,7 @@
       document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
       languageSelect.value = lang;
       document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+      aliasInput.placeholder = t('aliasPlaceholder');
       if (lastMotionData) renderMotions(lastMotionData);
       if (lastSonicStatus) renderSonicStatus(lastSonicStatus);
       renderControlGuide();
@@ -381,6 +441,7 @@
     };
 
     function motionLabel(name) {
+      if (motionAliases[name]) return motionAliases[name];
       return lang === 'zh' ? MOTION_LABELS_ZH[name] : null;
     }
 
@@ -397,6 +458,30 @@
     }
 
     function setText(id, value) { document.getElementById(id).textContent = value ?? '-'; }
+
+    function promptMotionAlias() {
+      aliasInput.value = '';
+      aliasModal.classList.add('open');
+      aliasInput.focus();
+      return new Promise(resolve => { pendingAliasResolve = resolve; });
+    }
+
+    function closeAliasModal(value) {
+      aliasModal.classList.remove('open');
+      const resolve = pendingAliasResolve;
+      pendingAliasResolve = null;
+      if (resolve) resolve(value);
+    }
+
+    function confirmAlias() {
+      const alias = aliasInput.value.trim().replace(/\s+/g, ' ');
+      if (!alias) {
+        setStatus(t('aliasRequired'));
+        aliasInput.focus();
+        return;
+      }
+      closeAliasModal(alias);
+    }
 
     async function api(path, options) {
       const response = await fetch(path, options);
@@ -478,6 +563,7 @@
 
     function renderMotions(data) {
       lastMotionData = data;
+      motionAliases = Object.fromEntries((data.motions || []).filter(motion => motion.alias).map(motion => [motion.name, motion.alias]));
       rowsEl.innerHTML = '';
       selectAll.checked = false;
       if (!data.motions.length) {
@@ -560,12 +646,15 @@
 
     async function uploadFiles(files) {
       if (!files.length) return setStatus(t('uploadEmpty'));
+      const alias = await promptMotionAlias();
+      if (!alias) return setStatus(t('uploadCancelled'));
       const form = new FormData();
       for (const file of files) form.append('files', file, file.webkitRelativePath || file.name);
+      form.append('motion_alias', alias);
       setStatus(t('uploading'));
       try {
         const data = await api('/api/motions/upload', { method: 'POST', body: form });
-        setStatus(t('uploaded', { name: data.motion }));
+        setStatus(t('uploaded', { name: data.alias || data.motion }));
         await loadMotions();
       } catch (err) { setStatus(t('uploadFailed') + err.message); }
     }
@@ -590,6 +679,13 @@
     }
 
     languageSelect.addEventListener('change', event => applyLanguage(event.target.value));
+    aliasCancelBtn.addEventListener('click', () => closeAliasModal(null));
+    aliasConfirmBtn.addEventListener('click', confirmAlias);
+    aliasModal.addEventListener('click', event => { if (event.target === aliasModal) closeAliasModal(null); });
+    aliasInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') confirmAlias();
+      if (event.key === 'Escape') closeAliasModal(null);
+    });
     selectAll.addEventListener('change', event => rowsEl.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = event.target.checked; }));
     dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
