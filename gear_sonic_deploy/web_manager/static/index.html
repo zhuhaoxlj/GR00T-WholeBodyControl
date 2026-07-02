@@ -206,6 +206,9 @@
     .motion-name { display: grid; gap: 3px; }
     .motion-name-zh { color: #dbeafe; font-size: 15px; font-weight: 800; }
     .motion-name-id { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; font-weight: 650; }
+    .motion-name-actions { margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .mini-action { min-height: 28px; padding: 4px 9px; border-radius: 999px; font-size: 12px; box-shadow: none; }
+    .locked-copy { color: var(--muted); font-size: 12px; }
     .badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 48px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
     .badge.ok { color: #064e3b; background: rgba(52, 211, 153, 0.88); }
     .badge.bad { color: #7f1d1d; background: rgba(252, 165, 165, 0.95); }
@@ -366,7 +369,7 @@
         ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：',
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
         commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位',
-        aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。'
+        aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -376,7 +379,7 @@
         ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: ',
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
         commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons',
-        aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.'
+        aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias'
       }
     };
 
@@ -459,10 +462,13 @@
 
     function setText(id, value) { document.getElementById(id).textContent = value ?? '-'; }
 
-    function promptMotionAlias() {
-      aliasInput.value = '';
+    function promptMotionAlias(initialValue = '', options = {}) {
+      document.getElementById('aliasModalTitle').textContent = options.title || t('aliasTitle');
+      aliasConfirmBtn.textContent = options.confirmText || t('confirmUpload');
+      aliasInput.value = initialValue || '';
       aliasModal.classList.add('open');
       aliasInput.focus();
+      aliasInput.select();
       return new Promise(resolve => { pendingAliasResolve = resolve; });
     }
 
@@ -576,9 +582,12 @@
           ? `<span class="badge ok">● ${t('ok')}</span>`
           : `<span class="badge bad">● ${t('invalid')}</span>`;
         const errors = motion.valid ? '' : `<div class="error-list">${motion.errors.map(escapeHtml).join('<br>')}</div>`;
+        const aliasAction = motion.alias_editable
+          ? `<button class="secondary mini-action" onclick="editMotionAlias('${escapeHtml(motion.name)}')">${t('editAlias')}</button>`
+          : `<span class="locked-copy">${t('presetLocked')}</span>`;
         tr.innerHTML = `
           <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
-          <td><span class="motion-name">${motionNameHtml(motion.name)}</span></td>
+          <td><span class="motion-name">${motionNameHtml(motion.name)}<span class="motion-name-actions">${aliasAction}</span></span></td>
           <td>${badge}${errors}</td>
           <td>${motion.timesteps ?? ''}</td>
           <td>${sizeText(motion.size_bytes)}</td>
@@ -646,7 +655,7 @@
 
     async function uploadFiles(files) {
       if (!files.length) return setStatus(t('uploadEmpty'));
-      const alias = await promptMotionAlias();
+      const alias = await promptMotionAlias('', { title: t('aliasTitle'), confirmText: t('confirmUpload') });
       if (!alias) return setStatus(t('uploadCancelled'));
       const form = new FormData();
       for (const file of files) form.append('files', file, file.webkitRelativePath || file.name);
@@ -661,6 +670,22 @@
 
     function uploadZip() { uploadFiles(document.getElementById('zipInput').files); }
     function uploadFolder() { uploadFiles(document.getElementById('folderInput').files); }
+
+    async function editMotionAlias(name) {
+      const currentAlias = motionAliases[name] || '';
+      const alias = await promptMotionAlias(currentAlias, { title: t('editAliasTitle'), confirmText: t('confirmAlias') });
+      if (!alias) return setStatus(t('uploadCancelled'));
+      try {
+        const data = await api('/api/motions/' + encodeURIComponent(name) + '/alias', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ alias }),
+        });
+        setStatus(t('aliasUpdated', { name: data.alias || data.motion }));
+        await loadMotions();
+        await loadSonicStatus();
+      } catch (err) { setStatus(t('aliasUpdateFailed') + err.message); }
+    }
 
     async function requestReload() {
       try { await api('/api/reload', { method: 'POST' }); setStatus(t('reloadOk')); }

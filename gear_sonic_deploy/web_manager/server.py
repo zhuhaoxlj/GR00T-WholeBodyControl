@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -51,6 +51,21 @@ EXPECTED_COLUMNS = {
 MOTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 MOTION_ALIAS_FILE = MOTION_DIR / ".motion_aliases.json"
 MOTION_ALIAS_MAX_LENGTH = 80
+PRESET_MOTION_NAMES = {
+    "dance_in_da_party_001__A464",
+    "dance_in_da_party_001__A464_M",
+    "forward_lunge_R_001__A359_M",
+    "macarena_001__A545",
+    "macarena_001__A545_M",
+    "neutral_kick_R_001__A543",
+    "neutral_kick_R_001__A543_M",
+    "squat_001__A359",
+    "tired_forward_lunge_R_001__A359_M",
+    "tired_one_leg_jumping_R_001__A359",
+    "tired_one_leg_jumping_R_001__A359_M",
+    "walking_quip_360_R_002__A428",
+    "walking_quip_360_R_002__A428_M",
+}
 
 PLANNER_MODE_GROUPS = [
     {"name": "standing", "display_name": "站立/行走", "actions": [
@@ -141,6 +156,10 @@ def set_motion_alias(motion_name: str, alias: str | None) -> None:
     else:
         aliases.pop(motion_name, None)
     write_motion_aliases(aliases)
+
+
+def is_user_uploaded_motion(motion_name: str) -> bool:
+    return motion_name not in PRESET_MOTION_NAMES
 
 
 def assert_under_motion_dir(path: Path) -> Path:
@@ -442,6 +461,7 @@ def list_motions() -> dict:
             "name": path.name,
             "alias": aliases.get(path.name),
             "display_name": aliases.get(path.name) or path.name,
+            "alias_editable": is_user_uploaded_motion(path.name),
             "valid": validation["valid"],
             "errors": validation["errors"],
             "timesteps": validation["metadata_timesteps"] or next(iter(validation["rows"].values()), None),
@@ -456,6 +476,19 @@ def list_motions() -> dict:
 def request_reload() -> dict:
     touch_reload_flag()
     return {"ok": True, "flag": str(MOTION_DIR / ".motion_reload_request")}
+
+
+@app.patch("/api/motions/{name}/alias")
+def update_motion_alias(name: str, payload: dict[str, str | None] = Body(default_factory=dict)) -> dict:
+    motion_name = safe_motion_name(name)
+    motion_path = assert_under_motion_dir(MOTION_DIR / motion_name)
+    if not motion_path.exists() or not motion_path.is_dir() or motion_path.is_symlink():
+        raise HTTPException(status_code=404, detail="Motion not found")
+    if not is_user_uploaded_motion(motion_name):
+        raise HTTPException(status_code=403, detail="Preset motions cannot be renamed")
+    alias = clean_motion_alias(payload.get("alias"))
+    set_motion_alias(motion_name, alias)
+    return {"ok": True, "motion": motion_name, "alias": alias}
 
 
 @app.post("/api/motions/upload")

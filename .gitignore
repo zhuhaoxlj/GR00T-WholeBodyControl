@@ -226,3 +226,4 @@ gear_sonic_deploy/g1/meshes/*_rev_1_0.STL
 sonic_model.tar.gz
 GEAR_SONIC_MODELS.sha256
 gear_sonic_deploy/reference/**/.sonic_status.json
+gear_sonic_deploy/reference/**/.motion_reload_request
