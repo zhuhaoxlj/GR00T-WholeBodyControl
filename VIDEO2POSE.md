@@ -56,7 +56,6 @@ python gear_sonic/scripts/run_sim_loop.py
 左：标动作参考姿态  中：红色为实机动作，绿色为目标动作  右：温度可视化机器人
 
 ```bash
-cd /home/mark/Documents/Dance/GR00T-WholeBodyControl
 source .venv_sim/bin/activate
 
 python gear_sonic_deploy/visualize_motion.py \

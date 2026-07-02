@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
-DEFAULT_MOTION_DIR = PROJECT_ROOT / "reference" / "self"
+DEFAULT_MOTION_DIR = PROJECT_ROOT / "reference" / "example"
 MOTION_DIR = Path(os.environ.get("SONIC_MOTION_DIR", DEFAULT_MOTION_DIR)).resolve()
 SONIC_STATUS_FILE = Path(
     os.environ.get("SONIC_STATUS_FILE", MOTION_DIR / ".sonic_status.json")
