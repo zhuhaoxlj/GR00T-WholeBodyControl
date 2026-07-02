@@ -38,6 +38,7 @@
 #include <iomanip>
 #include <filesystem>
 #include <regex>
+#include <algorithm>
 
 #include "../include/fk.hpp"
 #include "../include/policy_parameters.hpp"
@@ -695,6 +696,14 @@ class MotionDataReader {
         std::cerr << "Error reading directory: " << e.what() << std::endl;
         return false;
       }
+
+      std::sort(motion_names.begin(), motion_names.end(), [](const std::string& lhs, const std::string& rhs) {
+        std::string lhs_lower = lhs;
+        std::string rhs_lower = rhs;
+        std::transform(lhs_lower.begin(), lhs_lower.end(), lhs_lower.begin(), ::tolower);
+        std::transform(rhs_lower.begin(), rhs_lower.end(), rhs_lower.begin(), ::tolower);
+        return lhs_lower < rhs_lower;
+      });
 
       std::cout << "Found " << motion_names.size() << " motion folders" << std::endl;
 

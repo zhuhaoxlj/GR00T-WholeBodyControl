@@ -147,6 +147,10 @@
     .mode-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-weight: 800; }
     .chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 999px; background: rgba(51, 65, 85, 0.84); color: var(--muted); font-size: 12px; font-weight: 700; }
+    .motion-chip { align-items: flex-start; flex-direction: column; gap: 2px; max-width: 260px; padding: 7px 11px; border-radius: 14px; }
+    .motion-chip-zh { color: #e5edf8; font-size: 13px; font-weight: 850; line-height: 1.2; }
+    .motion-chip-id { color: #9ca3af; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 650; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+    .chip.active .motion-chip-zh, .chip.active .motion-chip-id { color: white; }
     .chip.active { background: rgba(79, 140, 255, 0.95); color: white; }
     .scheme-toggle { display: inline-flex; gap: 8px; flex-wrap: wrap; }
     .scheme-toggle button.active { background: linear-gradient(135deg, var(--primary), var(--primary-2)); box-shadow: 0 10px 22px rgba(79, 140, 255, 0.2); }
@@ -164,7 +168,9 @@
     th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(15, 23, 42, 0.38); position: sticky; top: 0; }
     tbody tr { transition: background 0.12s ease; }
     tbody tr:hover { background: rgba(148, 163, 184, 0.06); }
-    .motion-name { font-weight: 700; color: #dbeafe; }
+    .motion-name { display: grid; gap: 3px; }
+    .motion-name-zh { color: #dbeafe; font-size: 15px; font-weight: 800; }
+    .motion-name-id { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; font-weight: 650; }
     .badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 48px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
     .badge.ok { color: #064e3b; background: rgba(52, 211, 153, 0.88); }
     .badge.bad { color: #7f1d1d; background: rgba(252, 165, 165, 0.95); }
@@ -358,6 +364,38 @@
     }
     function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text ?? ''; return div.innerHTML; }
 
+    const MOTION_LABELS_ZH = {
+      dance_in_da_party_001__A464: '派对舞',
+      dance_in_da_party_001__A464_M: '派对舞（镜像）',
+      forward_lunge_R_001__A359_M: '右弓步前冲（镜像）',
+      macarena_001__A545: '玛卡莲娜',
+      macarena_001__A545_M: '玛卡莲娜（镜像）',
+      neutral_kick_R_001__A543: '右腿踢腿',
+      neutral_kick_R_001__A543_M: '右腿踢腿（镜像）',
+      squat_001__A359: '下蹲',
+      tired_forward_lunge_R_001__A359_M: '疲惫右弓步前冲（镜像）',
+      tired_one_leg_jumping_R_001__A359: '疲惫右脚单腿跳',
+      tired_one_leg_jumping_R_001__A359_M: '疲惫右脚单腿跳（镜像）',
+      walking_quip_360_R_002__A428: '360 度俏皮转身走',
+      walking_quip_360_R_002__A428_M: '360 度俏皮转身走（镜像）',
+    };
+
+    function motionLabel(name) {
+      return lang === 'zh' ? MOTION_LABELS_ZH[name] : null;
+    }
+
+    function motionNameHtml(name) {
+      const label = motionLabel(name);
+      if (!label) return `<span class="motion-name-id">${escapeHtml(name)}</span>`;
+      return `<span class="motion-name-zh">${escapeHtml(label)}</span><span class="motion-name-id">${escapeHtml(name)}</span>`;
+    }
+
+    function motionChipHtml(name) {
+      const label = motionLabel(name);
+      if (!label) return escapeHtml(name);
+      return `<span class="motion-chip-zh">${escapeHtml(label)}</span><span class="motion-chip-id">${escapeHtml(name)}</span>`;
+    }
+
     function setText(id, value) { document.getElementById(id).textContent = value ?? '-'; }
 
     async function api(path, options) {
@@ -454,7 +492,7 @@
         const errors = motion.valid ? '' : `<div class="error-list">${motion.errors.map(escapeHtml).join('<br>')}</div>`;
         tr.innerHTML = `
           <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
-          <td><span class="motion-name">${escapeHtml(motion.name)}</span></td>
+          <td><span class="motion-name">${motionNameHtml(motion.name)}</span></td>
           <td>${badge}${errors}</td>
           <td>${motion.timesteps ?? ''}</td>
           <td>${sizeText(motion.size_bytes)}</td>
@@ -466,7 +504,7 @@
     function renderChips(items, activeName) {
       return (items || []).map(name => {
         const active = name === activeName ? ' active' : '';
-        return `<span class="chip${active}">${escapeHtml(name)}</span>`;
+        return `<span class="chip motion-chip${active}">${motionChipHtml(name)}</span>`;
       }).join('') || `<span class="chip">${t('noAction')}</span>`;
     }
 
@@ -475,7 +513,7 @@
       const isPlanner = data.sonic_mode === 'planner';
       setText('sonicConnected', data.connected ? t('connected') : t('disconnected'));
       setText('sonicMode', isPlanner ? t('plannerMode') : t('motionMode'));
-      setText('sonicAction', data.current_action || t('noAction'));
+      setText('sonicAction', motionLabel(data.current_action) || data.current_action || t('noAction'));
       setText('sonicProgram', data.program_state || '-');
 
       const motionActions = (data.motion && data.motion.actions) || [];

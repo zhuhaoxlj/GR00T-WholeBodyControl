@@ -72,7 +72,7 @@ python gear_sonic_deploy/visualize_motion.py \
 终端4 管理 SONIC 舞蹈页面
 
 ```bash
-cd /home/mark/Documents/Dance/GR00T-WholeBodyControl/gear_sonic_deploy
+cd gear_sonic_deploy
 uv run --project web_manager uvicorn web_manager.server:app \
   --host 127.0.0.1 \
   --port 8080
