@@ -31,8 +31,6 @@ SONIC_ZMQ_TOPIC = os.environ.get("SONIC_ZMQ_TOPIC", "g1_debug")
 SONIC_STATUS_STALE_SECONDS = float(os.environ.get("SONIC_STATUS_STALE_SECONDS", "3.0"))
 
 REQUIRED_FILES = {
-    "metadata.txt",
-    "info.txt",
     "joint_pos.csv",
     "joint_vel.csv",
     "body_pos.csv",
@@ -40,7 +38,7 @@ REQUIRED_FILES = {
     "body_lin_vel.csv",
     "body_ang_vel.csv",
 }
-OPTIONAL_FILES = {"smpl_joint.csv", "smpl_pose.csv"}
+OPTIONAL_FILES = {"metadata.txt", "info.txt", "smpl_joint.csv", "smpl_pose.csv"}
 ALLOWED_FILES = REQUIRED_FILES | OPTIONAL_FILES
 EXPECTED_COLUMNS = {
     "joint_pos.csv": 29,
@@ -187,9 +185,7 @@ def validate_motion_dir(path: Path, strict: bool = True) -> dict:
         if row_counts and len(set(row_counts.values())) != 1:
             errors.append("CSV row counts are inconsistent")
     total_timesteps, body_indexes = parse_metadata(path / "metadata.txt")
-    if not body_indexes:
-        errors.append("metadata.txt missing Body part indexes")
-    elif len(body_indexes) != 14:
+    if body_indexes and len(body_indexes) != 14:
         errors.append(f"metadata Body part indexes expected 14 values, got {len(body_indexes)}")
     if row_counts:
         csv_timesteps = next(iter(row_counts.values()))
