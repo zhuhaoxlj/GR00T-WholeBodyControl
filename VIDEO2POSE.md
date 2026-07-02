@@ -1,3 +1,39 @@
+# 搭建环境
+
+1. 安装 uv
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+1. 仿真
+
+```bash
+install_scripts/install_mujoco_sim.sh
+```
+
+1. 下载模型
+
+```bash
+uv run \
+  --python 3.10 \
+  --with huggingface-hub \
+  --with socksio \
+  python download_from_hf.py
+```
+
+3.1 制作离线模型包给无法联网设备部署使用
+
+```bash
+bash install_scripts/package_gear_sonic_models.sh ./sonic_model.tar.gz
+```
+
+3.2 使用离线模型包
+
+```bash
+bash install_scripts/install_gear_sonic_models_offline.sh ./sonic_model.tar.gz
+```
+
 # 测试舞蹈
 
 ## 仿真
@@ -5,7 +41,6 @@
 终端1 开启仿真
 
 ```bash
-cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
 source .venv_sim/bin/activate
 python gear_sonic/scripts/run_sim_loop.py
 ```
@@ -13,8 +48,7 @@ python gear_sonic/scripts/run_sim_loop.py
 终端2 启动 sonic 控制
 
 ```bash
-cd /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy
-bash deploy.sh --input-type keyboard --motion-data /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy/reference/self sim
+./run_sonic_sim.sh
 ```
 
 终端3 启动原始舞蹈动作和 sonic 动作对比 
@@ -22,7 +56,7 @@ bash deploy.sh --input-type keyboard --motion-data /home/mark/Documents/Dance/gr
 左：标动作参考姿态  中：红色为实机动作，绿色为目标动作  右：温度可视化机器人
 
 ```bash
-cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
+cd /home/mark/Documents/Dance/GR00T-WholeBodyControl
 source .venv_sim/bin/activate
 
 python gear_sonic_deploy/visualize_motion.py \
@@ -39,7 +73,7 @@ python gear_sonic_deploy/visualize_motion.py \
 终端4 管理 SONIC 舞蹈页面
 
 ```bash
-cd /home/mark/Documents/Dance/gr00t-wholebodycontrol/gear_sonic_deploy
+cd /home/mark/Documents/Dance/GR00T-WholeBodyControl/gear_sonic_deploy
 uv run --project web_manager uvicorn web_manager.server:app \
   --host 127.0.0.1 \
   --port 8080
@@ -88,7 +122,7 @@ python3 gear_sonic_deploy/reference/convert_g1_retargeting_csv_to_sonic.py \
 离线动作查看器（不包含电机和sonic控制器）
 
 ```bash
-cd /home/mark/Documents/Dance/gr00t-wholebodycontrol
+cd /home/mark/Documents/Dance/GR00T-WholeBodyControl
 source .venv_sim/bin/activate
 
 python gear_sonic_deploy/visualize_motion.py \
