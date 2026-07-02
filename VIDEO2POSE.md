@@ -114,3 +114,19 @@ tmux kill-session -t sonic 2>/dev/null || true
 sudo systemctl start groot-deploy.service
 ```
 
+# 本地开发完同步到机器人
+
+```bash
+GIT_LFS_SKIP_PUSH=1 \
+  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" \
+  git push robot dance
+```
+
+# 机器人上面执行
+
+```bash
+cd ~/GR00T-WholeBodyControl && \
+  GIT_LFS_SKIP_SMUDGE=1 \
+  git pull robot dance
+```
+
