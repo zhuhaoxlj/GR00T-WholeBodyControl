@@ -64,6 +64,7 @@
 #include <iostream>
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <chrono>
 #include <algorithm>
 #include <numeric>
@@ -217,9 +218,12 @@ class G1Deploy {
     std::string motion_data_path_;
     std::string motion_catalog_path_;
     std::filesystem::path motion_reload_flag_path_;
+    std::filesystem::path sonic_status_file_path_;
     std::optional<std::filesystem::file_time_type> last_motion_reload_flag_mtime_;
     std::chrono::steady_clock::time_point last_motion_reload_check_{};
     static constexpr std::chrono::milliseconds MOTION_RELOAD_CHECK_INTERVAL{500};
+    std::chrono::steady_clock::time_point last_sonic_status_write_{};
+    static constexpr std::chrono::milliseconds SONIC_STATUS_WRITE_INTERVAL{200};
     
     // current_motion_mutex_ protects motion_reader_.motions/current_motion_index_,
     // current_motion_, and current_frame_ during motion switches and hot reloads.
@@ -2143,6 +2147,105 @@ class G1Deploy {
       return false;
     }
 
+    const char* ProgramStateName() const {
+      switch (program_state_) {
+        case ProgramState::INIT: return "INIT";
+        case ProgramState::WAIT_FOR_CONTROL: return "WAIT_FOR_CONTROL";
+        case ProgramState::CONTROL: return "CONTROL";
+      }
+      return "UNKNOWN";
+    }
+
+    std::string LocomotionModeName(int mode) const {
+      switch (static_cast<LocomotionMode>(mode)) {
+        case LocomotionMode::IDLE: return "IDLE";
+        case LocomotionMode::SLOW_WALK: return "SLOW_WALK";
+        case LocomotionMode::WALK: return "WALK";
+        case LocomotionMode::RUN: return "RUN";
+        case LocomotionMode::IDEL_SQUAT: return "IDEL_SQUAT";
+        case LocomotionMode::IDEL_KNEEL_TWO_LEGS: return "IDEL_KNEEL_TWO_LEGS";
+        case LocomotionMode::IDEL_KNEEL: return "IDEL_KNEEL";
+        case LocomotionMode::IDEL_LYING_FACE_DOWN: return "IDEL_LYING_FACE_DOWN";
+        case LocomotionMode::CRAWLING: return "CRAWLING";
+        case LocomotionMode::IDEL_BOXING: return "IDEL_BOXING";
+        case LocomotionMode::WALK_BOXING: return "WALK_BOXING";
+        case LocomotionMode::LEFT_PUNCH: return "LEFT_PUNCH";
+        case LocomotionMode::RIGHT_PUNCH: return "RIGHT_PUNCH";
+        case LocomotionMode::RANDOM_PUNCH: return "RANDOM_PUNCH";
+        case LocomotionMode::ELBOW_CRAWLING: return "ELBOW_CRAWLING";
+        case LocomotionMode::LEFT_HOOK: return "LEFT_HOOK";
+        case LocomotionMode::RIGHT_HOOK: return "RIGHT_HOOK";
+        case LocomotionMode::FORWARD_JUMP: return "FORWARD_JUMP";
+        case LocomotionMode::STEALTH_WALK: return "STEALTH_WALK";
+        case LocomotionMode::INJURED_WALK: return "INJURED_WALK";
+        case LocomotionMode::LEDGE_WALKING: return "LEDGE_WALKING";
+        case LocomotionMode::OBJECT_CARRYING: return "OBJECT_CARRYING";
+        case LocomotionMode::STEALTH_WALK_2: return "STEALTH_WALK_2";
+        case LocomotionMode::HAPPY_DANCE_WALK: return "HAPPY_DANCE_WALK";
+        case LocomotionMode::ZOMBIE_WALK: return "ZOMBIE_WALK";
+        case LocomotionMode::GUN_WALK: return "GUN_WALK";
+        case LocomotionMode::SCARE_WALK: return "SCARE_WALK";
+      }
+      return "UNKNOWN_" + std::to_string(mode);
+    }
+
+    std::string JsonEscape(const std::string& value) const {
+      std::ostringstream escaped;
+      for (char ch : value) {
+        switch (ch) {
+          case '\\': escaped << "\\\\"; break;
+          case '"': escaped << "\\\""; break;
+          case '\n': escaped << "\\n"; break;
+          case '\r': escaped << "\\r"; break;
+          case '\t': escaped << "\\t"; break;
+          default: escaped << ch; break;
+        }
+      }
+      return escaped.str();
+    }
+
+    void WriteSonicStatus(std::shared_ptr<const MotionSequence> current_motion_snapshot = nullptr,
+                          int current_frame_snapshot = -1) {
+      if (sonic_status_file_path_.empty()) { return; }
+      auto now = std::chrono::steady_clock::now();
+      if (now - last_sonic_status_write_ < SONIC_STATUS_WRITE_INTERVAL) { return; }
+      last_sonic_status_write_ = now;
+
+      if (!current_motion_snapshot) {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        current_motion_snapshot = current_motion_;
+        current_frame_snapshot = current_frame_;
+      }
+
+      auto movement_data = movement_state_buffer_.GetDataWithTime();
+      MovementState movement_state;
+      if (movement_data.data) { movement_state = *movement_data.data; }
+      bool planner_enabled = planner_ && planner_->planner_state_.enabled;
+      bool planner_initialized = planner_ && planner_->planner_state_.initialized;
+      std::string motion_name = current_motion_snapshot ? current_motion_snapshot->name : "";
+
+      std::ostringstream out;
+      out << "{\n";
+      out << "  \"updated_at\": " << std::chrono::duration<double>(
+        std::chrono::system_clock::now().time_since_epoch()).count() << ",\n";
+      out << "  \"program_state\": \"" << ProgramStateName() << "\",\n";
+      out << "  \"sonic_mode\": \"" << (planner_enabled ? "planner" : "motion") << "\",\n";
+      out << "  \"planner_enabled\": " << (planner_enabled ? "true" : "false") << ",\n";
+      out << "  \"planner_initialized\": " << (planner_initialized ? "true" : "false") << ",\n";
+      out << "  \"locomotion_mode\": " << movement_state.locomotion_mode << ",\n";
+      out << "  \"locomotion_mode_name\": \"" << LocomotionModeName(movement_state.locomotion_mode) << "\",\n";
+      out << "  \"movement_speed\": " << movement_state.movement_speed << ",\n";
+      out << "  \"height\": " << movement_state.height << ",\n";
+      out << "  \"current_motion\": \"" << JsonEscape(motion_name) << "\",\n";
+      out << "  \"current_frame\": " << current_frame_snapshot << "\n";
+      out << "}\n";
+
+      std::error_code ec;
+      std::filesystem::create_directories(sonic_status_file_path_.parent_path(), ec);
+      std::ofstream status_file(sonic_status_file_path_);
+      if (status_file) { status_file << out.str(); }
+    }
+
     std::string ResolveMotionCatalogPath(const std::string& requested_catalog_path,
                                          const std::string& motion_data_path) const {
       if (!requested_catalog_path.empty()) { return requested_catalog_path; }
@@ -2402,6 +2505,7 @@ class G1Deploy {
       motion_data_path_ = motion_data_path;
       motion_catalog_path_ = motion_catalog_path;
       motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
+      sonic_status_file_path_ = std::filesystem::path(motion_data_path_) / ".sonic_status.json";
       last_motion_reload_check_ = std::chrono::steady_clock::now();
       std::error_code reload_flag_error;
       if (std::filesystem::exists(motion_reload_flag_path_, reload_flag_error) && !reload_flag_error) {
@@ -4062,6 +4166,7 @@ class G1Deploy {
           // Re-publish robot_config so late-joining subscribers can receive it
           // before the policy is activated (ZMQ PUB has no persistence).
           for (auto& oi : output_interfaces_) { if (oi) oi->publish_config(); }
+          WriteSonicStatus();
           break;
 
         case ProgramState::WAIT_FOR_CONTROL:
@@ -4074,6 +4179,7 @@ class G1Deploy {
           // Re-publish robot_config so late-joining subscribers can receive it
           // before the policy is activated (ZMQ PUB has no persistence).
           for (auto& oi : output_interfaces_) { if (oi) oi->publish_config(); }
+          WriteSonicStatus();
           if (operator_state.start) {
             // Warn if starting control in token mode without tokens, but allow it
             if (initial_encoder_mode_ == -1 && !first_token_received_) {
@@ -4228,6 +4334,7 @@ class G1Deploy {
               );
             }
           }
+          WriteSonicStatus(current_motion_copy, current_frame_copy);
 
           // Handle recording of streamed motion (if enabled)
           if (enable_motion_recording_) {

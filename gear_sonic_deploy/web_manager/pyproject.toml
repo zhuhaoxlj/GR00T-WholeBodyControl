@@ -5,6 +5,8 @@ description = "Local web manager for Sonic reference motions"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi",
+  "msgpack",
+  "pyzmq",
   "uvicorn[standard]",
   "python-multipart",
 ]

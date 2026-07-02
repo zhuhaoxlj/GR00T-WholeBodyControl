@@ -137,6 +137,18 @@
     }
     .hint-list { margin: 18px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; font-size: 14px; }
 
+    .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .status-tile { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: rgba(15, 23, 42, 0.72); }
+    .status-label { color: var(--muted); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .status-value { margin-top: 7px; font-size: 20px; font-weight: 800; color: #dbeafe; word-break: break-word; }
+    .mode-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .mode-section { border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: rgba(15, 23, 42, 0.52); }
+    .mode-section.active { border-color: rgba(79, 140, 255, 0.72); box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.18) inset; }
+    .mode-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; font-weight: 800; }
+    .chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip { display: inline-flex; align-items: center; padding: 5px 9px; border-radius: 999px; background: rgba(51, 65, 85, 0.84); color: var(--muted); font-size: 12px; font-weight: 700; }
+    .chip.active { background: rgba(79, 140, 255, 0.95); color: white; }
+
     .table-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .table-wrap { overflow: auto; }
     table { width: 100%; min-width: 820px; border-collapse: collapse; }
@@ -153,7 +165,7 @@
     .empty { padding: 42px 18px; text-align: center; color: var(--muted); }
 
     @media (max-width: 980px) {
-      .hero, .grid { grid-template-columns: 1fr; }
+      .hero, .grid, .status-grid, .mode-sections { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
       .app-shell { width: min(100% - 24px, 1440px); padding-top: 14px; }
       .file-row { grid-template-columns: 1fr; }
@@ -175,6 +187,35 @@
         </select>
         <button class="ghost" onclick="requestReload()" data-i18n="requestReload">请求 Sonic 重载</button>
         <button class="ghost" onclick="loadMotions()" data-i18n="refresh">刷新列表</button>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom: 18px;">
+      <div class="card-header">
+        <h2 class="card-title" data-i18n="sonicStatusTitle">Sonic 状态</h2>
+        <button class="ghost" onclick="loadSonicStatus()" data-i18n="refreshStatus">刷新状态</button>
+      </div>
+      <div class="card-body">
+        <div class="status-grid">
+          <div class="status-tile">
+            <div class="status-label" data-i18n="statusConnection">连接</div>
+            <div id="sonicConnected" class="status-value">-</div>
+          </div>
+          <div class="status-tile">
+            <div class="status-label" data-i18n="statusMode">模式</div>
+            <div id="sonicMode" class="status-value">-</div>
+          </div>
+          <div class="status-tile">
+            <div class="status-label" data-i18n="statusAction">当前动作</div>
+            <div id="sonicAction" class="status-value">-</div>
+          </div>
+          <div class="status-tile">
+            <div class="status-label" data-i18n="statusProgram">程序状态</div>
+            <div id="sonicProgram" class="status-value">-</div>
+          </div>
+        </div>
+        <div id="sonicModeSections" class="mode-sections"></div>
+        <div id="sonicStatusMeta" class="status-box"></div>
       </div>
     </section>
 
@@ -244,21 +285,25 @@
         requestReload: '请求 Sonic 重载', refresh: '刷新列表', uploadTitle: '上传动作', dropTitle: '拖拽 .zip 到这里', dropCopy: '支持 sonic reference zip，也支持下面选择完整动作文件夹。',
         uploadZip: '上传 zip', uploadFolder: '上传文件夹', ready: '准备就绪。', hint1: '删除动作会先移动到 .trash，不会直接永久删除。', hint2: '页面会写入 .motion_reload_request，运行中的 Sonic 会检测并刷新。',
         motionsTitle: '动作列表', deleteSelected: '删除选中', colName: '名称', colStatus: '状态', colTimesteps: '帧数', colSize: '大小', colModified: '修改时间',
-        ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：'
+        ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：',
+        sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
         requestReload: 'Request Sonic reload', refresh: 'Refresh list', uploadTitle: 'Upload motion', dropTitle: 'Drop a .zip here', dropCopy: 'Supports sonic reference zips and complete motion folders selected below.',
         uploadZip: 'Upload zip', uploadFolder: 'Upload folder', ready: 'Ready.', hint1: 'Deleted motions are moved to .trash first, not permanently removed.', hint2: 'The page writes .motion_reload_request so the running Sonic process can reload.',
         motionsTitle: 'Motions', deleteSelected: 'Delete selected', colName: 'Name', colStatus: 'Status', colTimesteps: 'Timesteps', colSize: 'Size', colModified: 'Modified',
-        ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: '
+        ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: ',
+        sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s'
       }
     };
 
     let lang = localStorage.getItem('sonic-motion-lang') || 'zh';
     let lastMotionData = null;
+    let lastSonicStatus = null;
     const statusEl = document.getElementById('status');
     const rowsEl = document.getElementById('motionRows');
+    const sonicSectionsEl = document.getElementById('sonicModeSections');
     const dropZone = document.getElementById('dropZone');
     const languageSelect = document.getElementById('languageSelect');
     const selectAll = document.getElementById('selectAll');
@@ -276,6 +321,7 @@
       languageSelect.value = lang;
       document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
       if (lastMotionData) renderMotions(lastMotionData);
+      if (lastSonicStatus) renderSonicStatus(lastSonicStatus);
     }
 
     function setStatus(message) { statusEl.textContent = message; }
@@ -285,6 +331,8 @@
       return bytes + ' B';
     }
     function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text ?? ''; return div.innerHTML; }
+
+    function setText(id, value) { document.getElementById(id).textContent = value ?? '-'; }
 
     async function api(path, options) {
       const response = await fetch(path, options);
@@ -316,6 +364,54 @@
           <td class="muted">${escapeHtml(motion.mtime_iso)}</td>`;
         rowsEl.appendChild(tr);
       }
+    }
+
+    function renderChips(items, activeName) {
+      return (items || []).map(name => {
+        const active = name === activeName ? ' active' : '';
+        return `<span class="chip${active}">${escapeHtml(name)}</span>`;
+      }).join('') || `<span class="chip">${t('noAction')}</span>`;
+    }
+
+    function renderSonicStatus(data) {
+      lastSonicStatus = data;
+      const isPlanner = data.sonic_mode === 'planner';
+      setText('sonicConnected', data.connected ? t('connected') : t('disconnected'));
+      setText('sonicMode', isPlanner ? t('plannerMode') : t('motionMode'));
+      setText('sonicAction', data.current_action || t('noAction'));
+      setText('sonicProgram', data.program_state || '-');
+
+      const motionActions = (data.motion && data.motion.actions) || [];
+      const planner = data.planner || {};
+      const plannerGroups = planner.groups || [];
+      const plannerHtml = plannerGroups.map(group => {
+        const active = group.name === planner.current_group ? ' active' : '';
+        return `<div class="mode-section${active}">
+          <div class="mode-title"><span>${escapeHtml(group.display_name || group.name)}</span></div>
+          <div class="chip-list">${renderChips(group.actions, planner.current_action)}</div>
+        </div>`;
+      }).join('');
+
+      sonicSectionsEl.innerHTML = `
+        <div class="mode-section${isPlanner ? '' : ' active'}">
+          <div class="mode-title"><span>${t('motionSection')}</span><span class="badge ${isPlanner ? 'bad' : 'ok'}">${isPlanner ? '' : t('current')}</span></div>
+          <div class="chip-list">${renderChips(motionActions, data.motion && data.motion.current)}</div>
+        </div>
+        <div class="mode-section${isPlanner ? ' active' : ''}">
+          <div class="mode-title"><span>${t('plannerSection')}</span><span class="badge ${isPlanner ? 'ok' : 'bad'}">${isPlanner ? t('current') : ''}</span></div>
+          <div class="mode-sections">${plannerHtml}</div>
+        </div>`;
+
+      document.getElementById('sonicStatusMeta').textContent = t('statusMeta', {
+        source: data.source || '-',
+        time: data.updated_at_iso || '-',
+        seconds: data.stale_seconds ?? '-',
+      });
+    }
+
+    async function loadSonicStatus() {
+      try { renderSonicStatus(await api('/api/sonic/status')); }
+      catch (err) { document.getElementById('sonicStatusMeta').textContent = err.message; }
     }
 
     async function loadMotions() {
@@ -365,7 +461,9 @@
     dropZone.addEventListener('drop', event => { event.preventDefault(); dropZone.classList.remove('drag'); uploadFiles(event.dataTransfer.files); });
 
     applyLanguage(lang);
+    loadSonicStatus();
     loadMotions();
+    setInterval(loadSonicStatus, 1000);
   </script>
 </body>
 </html>
