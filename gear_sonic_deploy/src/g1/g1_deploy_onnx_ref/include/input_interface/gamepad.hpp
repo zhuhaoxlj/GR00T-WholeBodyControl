@@ -172,15 +172,6 @@ class Gamepad : public InputInterface {
     double planner_facing_angle = 0.0;         ///< Accumulated facing angle from right stick (radians).
     double planner_moving_direction = 0.0;     ///< Current movement direction from left stick (radians).
 
-    bool left_stick_turn_active = false;
-    int left_stick_turn_side = 0;
-    float left_stick_forward_scale = 0.0f;
-    double left_stick_turn_start_angle = 0.0;
-    double left_stick_turn_target_angle = 0.0;
-    std::chrono::steady_clock::time_point left_stick_turn_start_time{};
-    const std::chrono::milliseconds left_stick_turn_stop_duration{700};
-    const std::chrono::milliseconds left_stick_turn_duration{1200};
-
     /// Raw wireless-remote data buffer.  Written externally (e.g. by InterfaceManager).
     REMOTE_DATA_RX gamepad_data;
 
@@ -207,7 +198,7 @@ class Gamepad : public InputInterface {
      * - B Button      - Emergency stop
      * - L1/R1 Buttons - Change movement mode (0-4: idle, slow walk, walk, run, boxing)
      * - L2/R2 Buttons - Decrease/Increase movement speed
-     * - Left Stick    - Forward/backward motion; left/right turns first, then moves forward
+     * - Left Stick    - Movement direction (lx, ly)
      * - Right Stick   - Facing direction (rx, ry)
      */
 
@@ -406,33 +397,11 @@ class Gamepad : public InputInterface {
         }
         
         if (std::abs(lx) > dead_zone || std::abs(ly) > dead_zone) {
-            const bool horizontal_input = std::abs(lx) > dead_zone && std::abs(lx) >= std::abs(ly);
-            if (horizontal_input) {
-              const int requested_side = lx < 0.0f ? 1 : -1;
-              left_stick_forward_scale = std::min(1.0f, std::abs(lx));
-
-              if (left_stick_turn_side != requested_side) {
-                left_stick_turn_side = requested_side;
-                left_stick_turn_active = true;
-                left_stick_turn_start_angle = planner_facing_angle;
-                left_stick_turn_target_angle = planner_facing_angle + requested_side * M_PI / 2.0;
-                left_stick_turn_start_time = std::chrono::steady_clock::now();
-              }
-              planner_moving_direction = planner_facing_angle;
-            } else {
-              left_stick_turn_active = false;
-              left_stick_turn_side = 0;
-              left_stick_forward_scale = 0.0f;
-              planner_moving_direction = planner_facing_angle;
-              if (ly < -dead_zone) {
-                planner_moving_direction += M_PI;
-              }
-            }
+            planner_moving_direction = atan2(ly, lx) - M_PI/2 + planner_facing_angle;
             if constexpr (DEBUG_LOGGING) {
               {
-                std::cout << "[GAMEPAD DEBUG] Left stick - Turn-first moving: " << planner_moving_direction << " rad ("
-                          << (planner_moving_direction * 180.0 / M_PI) << " deg), facing: "
-                          << planner_facing_angle << " rad" << std::endl;
+                std::cout << "[GAMEPAD DEBUG] Left stick - Moving direction: " << planner_moving_direction << " rad ("
+                          << (planner_moving_direction * 180.0 / M_PI) << " deg)" << std::endl;
               }
             }
         }
@@ -729,13 +698,8 @@ class Gamepad : public InputInterface {
           double final_speed = this->planner_use_movement_speed;
           double final_height = this->planner_use_height;
 
-          const bool horizontal_left_stick_held = left_stick_turn_side != 0 && std::abs(lx) > dead_zone;
-
           // If left sticks are in the dead zone, idle mode
           if (std::abs(lx) < dead_zone && std::abs(ly) < dead_zone) {
-            left_stick_turn_active = false;
-            left_stick_turn_side = 0;
-            left_stick_forward_scale = 0.0f;
             if constexpr (DEBUG_LOGGING) {
               std::cout << "Both left sticks in the dead zone - Idle mode" << std::endl;
               std::cout << "[GAMEPAD DEBUG] Left stick: lx=" << lx << ", ly=" << ly << std::endl;
@@ -750,37 +714,6 @@ class Gamepad : public InputInterface {
               final_movement = {0.0f, 0.0f, 0.0f};
               final_speed = 0;
               final_height = final_height;
-              }
-          }
-
-          if (horizontal_left_stick_held && !is_static_motion_mode(LocomotionMode(final_mode))) {
-            if (left_stick_turn_active) {
-              auto elapsed = std::chrono::steady_clock::now() - left_stick_turn_start_time;
-              if (elapsed < left_stick_turn_stop_duration) {
-                planner_facing_angle = left_stick_turn_start_angle;
-                final_movement = {0.0f, 0.0f, 0.0f};
-                final_speed = 0.0f;
-              } else if (elapsed < left_stick_turn_stop_duration + left_stick_turn_duration) {
-                auto turn_elapsed = elapsed - left_stick_turn_stop_duration;
-                double alpha = static_cast<double>(turn_elapsed.count()) /
-                               static_cast<double>(left_stick_turn_duration.count());
-                planner_facing_angle = left_stick_turn_start_angle +
-                                       (left_stick_turn_target_angle - left_stick_turn_start_angle) * alpha;
-                final_movement = {0.0f, 0.0f, 0.0f};
-                final_speed = 0.0f;
-              } else {
-                planner_facing_angle = left_stick_turn_target_angle;
-                left_stick_turn_active = false;
-              }
-            }
-
-            final_facing_direction = {double(cos(planner_facing_angle)), double(sin(planner_facing_angle)), 0.0};
-            if (!left_stick_turn_active) {
-              final_mode = this->planner_use_movement_mode;
-              final_movement = final_facing_direction;
-              double base_speed = this->planner_use_movement_speed > 0.0 ? this->planner_use_movement_speed : 1.0;
-              final_speed = base_speed * left_stick_forward_scale;
-              final_height = this->planner_use_height;
             }
           }
 
