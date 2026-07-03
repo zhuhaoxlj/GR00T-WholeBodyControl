@@ -522,23 +522,23 @@
       ],
       gamepad: [
         { zh: '模式切换', en: 'Mode switching', rows: [
-          { key: 'Start', zh: '启动控制，并进入 planner 控制逻辑', en: 'Start control and enter planner control flow' },
+          { key: 'Start', zh: '启动控制', en: 'Start control' },
           { key: 'Select', zh: '停止控制 / 急停', en: 'Stop control / emergency stop' },
-          { key: 'A', zh: '立即急停', en: 'Immediate emergency stop' },
-          { key: 'F1', zh: '切换到 ZMQ streaming 委托', en: 'Toggle ZMQ streaming delegate' },
+          { key: 'F1', zh: '切换动作模式 / Planner 模式', en: 'Toggle motion mode / Planner mode' },
+          { key: 'X / Y', zh: '重置身体朝向基准', en: 'Reinitialize base heading' },
         ]},
-        { zh: '动作组选择', en: 'Action set selection', rows: [
-          { key: 'D-Up', zh: '站立/行走组，默认 SLOW_WALK', en: 'Standing/walking set, default SLOW_WALK' },
-          { key: 'D-Down', zh: '下蹲/爬行组，默认 IDEL_SQUAT', en: 'Squat/crawl set, default IDEL_SQUAT' },
-          { key: 'D-Left', zh: '拳击组，默认 IDEL_BOXING', en: 'Boxing set, default IDEL_BOXING' },
-          { key: 'D-Right', zh: '风格化行走组，默认 LEDGE_WALKING', en: 'Styled walking set, default LEDGE_WALKING' },
+        { zh: '动作模式', en: 'Motion mode', rows: [
+          { key: 'A', zh: '播放 / 继续当前动作', en: 'Play / resume current motion' },
+          { key: 'B', zh: '当前动作回到第 0 帧并暂停', en: 'Restart current motion at frame 0 and pause' },
+          { key: 'L1 / R1', zh: '上一个 / 下一个动作', en: 'Previous / next reference motion' },
+          { key: 'D-Left / D-Right', zh: '微调朝向左 / 右', en: 'Nudge heading left / right' },
         ]},
-        { zh: '组内动作 / 移动', en: 'Actions / movement', rows: [
-          { key: 'X / Y', zh: '普通组：下一个 / 上一个动作；拳击组：WALK_BOXING / RANDOM_PUNCH', en: 'Normal sets: next / previous; boxing: WALK_BOXING / RANDOM_PUNCH' },
-          { key: 'B', zh: '回到当前组默认动作', en: 'Reset to current set default action' },
-          { key: 'L1 / R1', zh: '普通组：朝向 ±π/4；拳击组：LEFT_PUNCH / RIGHT_PUNCH', en: 'Normal sets: facing ±pi/4; boxing: LEFT_PUNCH / RIGHT_PUNCH' },
-          { key: 'L2 / R2', zh: '下蹲组：高度 ±0.1；拳击组：LEFT_HOOK / RIGHT_HOOK', en: 'Squat set: height ±0.1; boxing: LEFT_HOOK / RIGHT_HOOK' },
-          { key: 'L-Stick', zh: '前后移动，左右先转向再前进', en: 'Move forward/back; left/right turns then moves' },
+        { zh: 'Planner 模式', en: 'Planner mode', rows: [
+          { key: 'A', zh: '播放 / 继续', en: 'Play / resume' },
+          { key: 'B', zh: 'Planner 急停', en: 'Planner emergency stop' },
+          { key: 'L1 / R1', zh: '上一个 / 下一个 planner 运动模式', en: 'Previous / next planner locomotion mode' },
+          { key: 'L2 / R2', zh: '降低 / 提高速度；下蹲类模式下降低 / 提高高度', en: 'Decrease / increase speed; adjust height in squat/kneel modes' },
+          { key: 'L-Stick', zh: '移动方向', en: 'Movement direction' },
           { key: 'R-Stick', zh: '连续控制朝向', en: 'Continuous facing direction control' },
         ]},
       ],

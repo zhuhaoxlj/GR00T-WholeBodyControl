@@ -390,6 +390,26 @@ public:
         return {false, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
     }
 
+    /// @brief Optional planner-mode state exposed by local input handlers.
+    virtual std::optional<bool> GetPlannerModeEnabled() const {
+        return {};
+    }
+
+    /// @brief Optional planner locomotion mode selected by the input handler.
+    virtual std::optional<int> GetPlannerLocomotionMode() const {
+        return {};
+    }
+
+    /// @brief Optional planner movement speed selected by the input handler.
+    virtual std::optional<double> GetPlannerMovementSpeed() const {
+        return {};
+    }
+
+    /// @brief Optional planner body height selected by the input handler.
+    virtual std::optional<double> GetPlannerHeight() const {
+        return {};
+    }
+
     /// @brief Get the last update time of the input interface.
     virtual std::optional<std::chrono::steady_clock::time_point> GetLastUpdateTime() const {
         // Return empty optional as a default, implementers should override this if they have a timestamp

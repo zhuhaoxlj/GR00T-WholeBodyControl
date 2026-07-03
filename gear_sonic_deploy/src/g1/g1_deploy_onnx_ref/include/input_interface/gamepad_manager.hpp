@@ -1,45 +1,34 @@
 /**
  * @file gamepad_manager.hpp
- * @brief Planner-centric gamepad manager with ZMQ delegate and D-pad motion-set selection.
+ * @brief Gamepad manager with official motion/planner button mapping.
  *
  * GamepadManager is a specialised InputInterface that:
  *  - Reads the Unitree wireless gamepad **directly** (no nested Gamepad class).
- *  - Operates **exclusively in planner mode** – the planner must always be loaded.
- *  - Can delegate to ZMQEndpointInterface via F1 button toggle.
- *  - D-pad selects one of 4 motion sets; face buttons cycle within the set.
- *  - Boxing set uses direct key selection instead of cycling.
+ *  - Uses F1 to toggle between reference-motion playback and planner mode.
+ *  - Keeps ZMQ available through keyboard manager shortcuts, not gamepad F1.
  *
- * ## Gamepad Button Mapping (Planner Mode)
+ * ## Gamepad Button Mapping
  *
  *   Button  | Action
  *   --------|-------
- *   Start   | Start control (enable planner, wait for init, auto-play)
+ *   Start   | Start control
  *   Select  | Emergency stop
- *   A       | Emergency stop (immediate halt)
- *   D-Up    | Select Standing motion set (SLOW_WALK default)
- *   D-Down  | Select Squat/Crawl motion set (IDEL_SQUAT default)
- *   D-Left  | Select Boxing motion set (IDEL_BOXING default)
- *   D-Right | Select Styled Walking motion set (LEDGE_WALKING default)
- *   F1      | Toggle ZMQ streaming
+ *   F1      | Toggle motion mode / planner mode
+ *   X/Y     | Reinitialize base heading
+ *   D-left/right | Delta heading in motion mode
  *
- *   --- Standing / Squat / Styled sets (loop cycling) ---
- *   X       | Next mode in current set (wraps)
- *   Y       | Previous mode in current set (wraps)
- *   B       | Reset to set's default mode
- *   L1/R1   | Facing angle ±π/4
- *   L2/R2   | Height ±0.1 (Squat set only; disabled otherwise)
+ *   Motion mode:
+ *   A       | Play / resume current reference motion
+ *   B       | Restart current reference motion at frame 0
+ *   L1/R1   | Previous / next reference motion
  *
- *   --- Boxing set (direct selection) ---
- *   X       | WALK_BOXING
- *   Y       | RANDOM_PUNCH
- *   B       | IDEL_BOXING (reset)
- *   L1      | LEFT_PUNCH
- *   R1      | RIGHT_PUNCH
- *   L2      | LEFT_HOOK
- *   R2      | RIGHT_HOOK
- *
- *   L stick | Movement direction (binned to nearest 30° increment)
- *   R stick | Facing direction (continuous)
+ *   Planner mode:
+ *   A       | Play / resume
+ *   B       | Planner emergency stop
+ *   L1/R1   | Previous / next planner locomotion mode
+ *   L2/R2   | Decrease / increase planner speed or height
+ *   L stick | Movement direction
+ *   R stick | Facing direction
  */
 
 #ifndef GAMEPAD_MANAGER_HPP
@@ -53,6 +42,7 @@
 #include <array>
 #include <thread>
 #include <chrono>
+#include <algorithm>
 
 #include "input_interface.hpp"
 #include "zmq_endpoint_interface.hpp"
@@ -65,13 +55,10 @@
 
 /**
  * @class GamepadManager
- * @brief Planner-only gamepad controller with ZMQ delegate and D-pad motion-set selection.
+ * @brief Gamepad controller with official motion/planner button mapping.
  *
- * When in GAMEPAD mode, button presses and stick positions are translated
- * directly into MovementState commands for the locomotion planner.
- * D-pad selects one of 4 motion sets; face buttons cycle within the set
- * (except Boxing which uses direct key selection).
- * When in ZMQ mode (toggled via F1), all calls are forwarded to ZMQ.
+ * When in GAMEPAD mode, F1 toggles between reference-motion playback and
+ * planner control. ZMQ remains available via keyboard manager shortcuts.
  */
 class GamepadManager : public InputInterface {
   public:
@@ -111,6 +98,12 @@ class GamepadManager : public InputInterface {
       report_temperature_flag_ = false;
       start_control_ = false;
       stop_control_ = false;
+      motion_prev_ = false;
+      motion_next_ = false;
+      play_motion_ = false;
+      motion_restart_ = false;
+      delta_left_ = false;
+      delta_right_ = false;
       reinitialize_ = false;
       planner_emergency_stop_ = false;
 
@@ -148,34 +141,16 @@ class GamepadManager : public InputInterface {
       // Update gamepad data and buttons
       update_gamepad_data(gamepad_data_.RF_RX);
 
-      // F1 - Toggle ZMQ streaming
-      bool trigger_ZMQ_toggle = false;
+      // F1 - Toggle between reference-motion mode and planner mode.
       if (F1_.on_press) {
-        if (active_ != ManagedType::ZMQ) {
-          SetActiveInterface(ManagedType::ZMQ);
+        if (active_ != ManagedType::GAMEPAD) {
+          SetActiveInterface(ManagedType::GAMEPAD);
         }
-        trigger_ZMQ_toggle = true;
+        use_planner_ = !use_planner_;
         if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GamepadManager DEBUG] F1 pressed - ZMQ toggle" << std::endl;
+          std::cout << "[GamepadManager DEBUG] F1 pressed - Planner toggled to: "
+                    << (use_planner_ ? "ON" : "OFF") << std::endl;
         }
-      }
-
-      // D-pad - Motion set selection (switches back to GAMEPAD if in ZMQ)
-      if (up_.on_press) {
-        if (active_ != ManagedType::GAMEPAD) { SetActiveInterface(ManagedType::GAMEPAD); }
-        selectMotionSet(0);  // Standing
-      }
-      if (down_.on_press) {
-        if (active_ != ManagedType::GAMEPAD) { SetActiveInterface(ManagedType::GAMEPAD); }
-        selectMotionSet(1);  // Squat/Crawl
-      }
-      if (left_.on_press) {
-        if (active_ != ManagedType::GAMEPAD) { SetActiveInterface(ManagedType::GAMEPAD); }
-        selectMotionSet(2);  // Boxing
-      }
-      if (right_.on_press) {
-        if (active_ != ManagedType::GAMEPAD) { SetActiveInterface(ManagedType::GAMEPAD); }
-        selectMotionSet(3);  // Styled Walking
       }
 
       // Select - Emergency Stop
@@ -189,9 +164,6 @@ class GamepadManager : public InputInterface {
       // If not in gamepad mode, update the active interface
       if (active_ != ManagedType::GAMEPAD && current_) {
         current_->update();
-        if (trigger_ZMQ_toggle && zmq_) {
-            zmq_->TriggerZMQToggle();
-        }
       } else {
         processGamepadPlannerControls();
       }
@@ -208,11 +180,9 @@ class GamepadManager : public InputInterface {
                       DataBuffer<MovementState>& movement_state_buffer,
                       std::mutex& current_motion_mutex,
                       bool& report_temperature) override {
-      // Check if planner is loaded (required for GamepadManager)
-      if (!has_planner) {
-        std::cerr << "[GamepadManager ERROR] Planner not loaded - GamepadManager requires planner. Stopping control." << std::endl;
-        operator_state.stop = true;
-        return;
+      if (use_planner_ && !has_planner) {
+        std::cerr << "[GamepadManager ERROR] Planner not loaded - cannot enable planner mode." << std::endl;
+        use_planner_ = false;
       }
 
       // NOTE: Encoder mode safety check removed - encoder mode is now a property of the motion
@@ -233,11 +203,37 @@ class GamepadManager : public InputInterface {
       // Handle stop control
       if (stop_control_) { operator_state.stop = true; }
 
-      // If in gamepad mode, handle planner-only controls
+      // D-pad left/right are common heading nudges in both motion and planner modes.
+      if (delta_left_) {
+        auto current_heading_state = heading_state_buffer.GetDataWithTime().data;
+        HeadingState current_state = current_heading_state ? *current_heading_state : HeadingState();
+        double new_delta = current_state.delta_heading + 0.1;
+        heading_state_buffer.SetData(HeadingState(current_state.init_base_quat, new_delta));
+        std::cout << "[GamepadManager] Delta heading left: " << new_delta << " rad" << std::endl;
+      }
+
+      if (delta_right_) {
+        auto current_heading_state = heading_state_buffer.GetDataWithTime().data;
+        HeadingState current_state = current_heading_state ? *current_heading_state : HeadingState();
+        double new_delta = current_state.delta_heading - 0.1;
+        heading_state_buffer.SetData(HeadingState(current_state.init_base_quat, new_delta));
+        std::cout << "[GamepadManager] Delta heading right: " << new_delta << " rad" << std::endl;
+      }
+
+      // If in gamepad mode, handle official motion/planner controls
       if (active_ == ManagedType::GAMEPAD) {
-        handleGamepadPlannerInput(motion_reader, current_motion, current_frame,
-                                  operator_state, reinitialize_heading, heading_state_buffer,
-                                  planner_state, movement_state_buffer, current_motion_mutex);
+        handlePlannerToggle(motion_reader, current_motion, current_frame,
+                            operator_state, reinitialize_heading, has_planner,
+                            planner_state, movement_state_buffer, current_motion_mutex);
+        if (use_planner_) {
+          handleGamepadPlannerInput(motion_reader, current_motion, current_frame,
+                                    operator_state, reinitialize_heading, heading_state_buffer,
+                                    planner_state, movement_state_buffer, current_motion_mutex);
+        } else {
+          handleGamepadMotionInput(motion_reader, current_motion, current_frame,
+                                   operator_state, reinitialize_heading, heading_state_buffer,
+                                   current_motion_mutex);
+        }
       } else {
         // Delegate to ZMQ
         if (current_) {
@@ -573,7 +569,7 @@ class GamepadManager : public InputInterface {
       }
     }
 
-    // Process gamepad inputs for planner controls (called from update())
+    // Process gamepad inputs using the official motion/planner mapping.
     void processGamepadPlannerControls() {
       // Start button
       if (start_.on_press) {
@@ -583,193 +579,298 @@ class GamepadManager : public InputInterface {
         }
       }
 
-      // A - Emergency Stop (always available)
-      if (A_.on_press) {
-        planner_emergency_stop_ = true;
-        if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GamepadManager DEBUG] A pressed - Emergency Stop" << std::endl;
-        }
-      }
+      if (left_.on_press) { delta_left_ = true; }
+      if (right_.on_press) { delta_right_ = true; }
 
-      // ---- Boxing set: direct key selection (no cycling) ----
-      if (motion_set_index_ == 2) {
-        if (X_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::WALK_BOXING);
-          applySpeedAndHeight(LocomotionMode::WALK_BOXING);
-          boxing_revert_time_ = {};  // WALK_BOXING is the default, no revert needed
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] X - WALK_BOXING" << std::endl; }
+      if (!use_planner_) {
+        // Motion mode: match the original Gamepad mapping.
+        if (X_.on_press || Y_.on_press) {
+          reinitialize_ = true;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] X/Y pressed - Reinitialize" << std::endl;
+          }
         }
-        if (Y_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::RANDOM_PUNCH);
-          applySpeedAndHeight(LocomotionMode::RANDOM_PUNCH);
-          boxing_revert_time_ = {};  // RANDOM_PUNCH stays until user changes
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] Y - RANDOM_PUNCH" << std::endl; }
-        }
-        // B - IDEL_BOXING (auto-reverts to WALK_BOXING after 1s)
         if (B_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::IDEL_BOXING);
-          applySpeedAndHeight(LocomotionMode::IDEL_BOXING);
-          boxing_revert_time_ = std::chrono::steady_clock::now();
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] B - IDEL_BOXING (auto-revert 1s)" << std::endl; }
+          motion_restart_ = true;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] B pressed - Motion restart" << std::endl;
+          }
         }
-        // L1/R1/L2/R2 - Punches/hooks (auto-revert to WALK_BOXING after 1s)
+        if (A_.on_press) {
+          play_motion_ = true;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] A pressed - Play motion" << std::endl;
+          }
+        }
         if (L1_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::LEFT_PUNCH);
-          applySpeedAndHeight(LocomotionMode::LEFT_PUNCH);
-          boxing_revert_time_ = std::chrono::steady_clock::now();
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] L1 - LEFT_PUNCH (auto-revert 1s)" << std::endl; }
+          motion_prev_ = true;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] L1 pressed - Previous motion" << std::endl;
+          }
         }
         if (R1_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::RIGHT_PUNCH);
-          applySpeedAndHeight(LocomotionMode::RIGHT_PUNCH);
-          boxing_revert_time_ = std::chrono::steady_clock::now();
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] R1 - RIGHT_PUNCH (auto-revert 1s)" << std::endl; }
-        }
-        if (L2_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::LEFT_HOOK);
-          applySpeedAndHeight(LocomotionMode::LEFT_HOOK);
-          boxing_revert_time_ = std::chrono::steady_clock::now();
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] L2 - LEFT_HOOK (auto-revert 1s)" << std::endl; }
-        }
-        if (R2_.on_press) {
-          planner_use_movement_mode_ = static_cast<int>(LocomotionMode::RIGHT_HOOK);
-          applySpeedAndHeight(LocomotionMode::RIGHT_HOOK);
-          boxing_revert_time_ = std::chrono::steady_clock::now();
-          if constexpr (DEBUG_LOGGING) { std::cout << "[GamepadManager DEBUG] R2 - RIGHT_HOOK (auto-revert 1s)" << std::endl; }
-        }
-
-        // Auto-revert to WALK_BOXING after 1s if no new mode key pressed
-        if (boxing_revert_time_.time_since_epoch().count() != 0) {
-          auto elapsed = std::chrono::steady_clock::now() - boxing_revert_time_;
-          if (elapsed > std::chrono::milliseconds(500)) {
-            planner_use_movement_mode_ = static_cast<int>(LocomotionMode::WALK_BOXING);
-            applySpeedAndHeight(LocomotionMode::WALK_BOXING);
-            boxing_revert_time_ = {};
-            if constexpr (DEBUG_LOGGING) {
-              std::cout << "[GamepadManager DEBUG] Boxing auto-revert -> WALK_BOXING" << std::endl;
-            }
+          motion_next_ = true;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] R1 pressed - Next motion" << std::endl;
           }
         }
       } else {
-        // ---- Standing / Squat / Styled sets: loop cycling ----
-        if (X_.on_press) {
-          // Next mode (wraps)
-          bool was_crawling = isInCrawlingMode();
-          mode_index_in_set_ = (mode_index_in_set_ + 1) % static_cast<int>(current_motion_set_.size());
-          LocomotionMode target = current_motion_set_[mode_index_in_set_];
-          if (target == LocomotionMode::CRAWLING || target == LocomotionMode::ELBOW_CRAWLING) {
-            beginCrawlingTransition(target);
-          } else if (was_crawling) {
-            beginExitCrawlingTransition(target);
-          } else {
-            transition_start_time_ = {};  // Cancel any pending transition
-            transition_target_mode_ = LocomotionMode::IDLE;
-            transition_final_mode_ = LocomotionMode::IDLE;
-            applyModeFromSet();
-          }
+        // Planner mode: match the original Gamepad mapping.
+        if (X_.on_press || Y_.on_press) {
+          reinitialize_ = true;
           if constexpr (DEBUG_LOGGING) {
-            std::cout << "[GamepadManager DEBUG] X - Next mode [" << mode_index_in_set_
-                      << "]: " << planner_use_movement_mode_ << std::endl;
+            std::cout << "[GamepadManager DEBUG] X/Y pressed - Reinitialize" << std::endl;
           }
         }
-        if (Y_.on_press) {
-          // Previous mode (wraps)
-          bool was_crawling = isInCrawlingMode();
-          mode_index_in_set_ = (mode_index_in_set_ - 1 + static_cast<int>(current_motion_set_.size()))
-                               % static_cast<int>(current_motion_set_.size());
-          LocomotionMode target = current_motion_set_[mode_index_in_set_];
-          if (target == LocomotionMode::CRAWLING || target == LocomotionMode::ELBOW_CRAWLING) {
-            beginCrawlingTransition(target);
-          } else if (was_crawling) {
-            beginExitCrawlingTransition(target);
-          } else {
-            transition_start_time_ = {};
-            transition_target_mode_ = LocomotionMode::IDLE;
-            transition_final_mode_ = LocomotionMode::IDLE;
-            applyModeFromSet();
-          }
+        if (A_.on_press) {
+          play_motion_ = true;
           if constexpr (DEBUG_LOGGING) {
-            std::cout << "[GamepadManager DEBUG] Y - Prev mode [" << mode_index_in_set_
-                      << "]: " << planner_use_movement_mode_ << std::endl;
+            std::cout << "[GamepadManager DEBUG] A pressed - Play motion" << std::endl;
           }
         }
         if (B_.on_press) {
-          // Reset to set's default (index 0)
-          bool was_crawling = isInCrawlingMode();
-          mode_index_in_set_ = 0;
-          LocomotionMode target = current_motion_set_[0];
-          if (was_crawling && target != LocomotionMode::CRAWLING && target != LocomotionMode::ELBOW_CRAWLING) {
-            beginExitCrawlingTransition(target);
-          } else {
-            transition_start_time_ = {};
-            transition_target_mode_ = LocomotionMode::IDLE;
-            transition_final_mode_ = LocomotionMode::IDLE;
-            applyModeFromSet();
-          }
+          planner_emergency_stop_ = true;
           if constexpr (DEBUG_LOGGING) {
-            std::cout << "[GamepadManager DEBUG] B - Reset to default mode: "
+            std::cout << "[GamepadManager DEBUG] B pressed - Planner emergency stop" << std::endl;
+          }
+        }
+        if (L1_.on_press) {
+          planner_use_movement_mode_ -= 1;
+          if (planner_use_movement_mode_ < 0) { planner_use_movement_mode_ = 6; }
+          if (planner_use_movement_mode_ == 6) { planner_use_height_ = 0.8; }
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] L1 pressed - Movement mode changed to: "
                       << planner_use_movement_mode_ << std::endl;
           }
         }
-
-        // L1/R1 - Facing angle (not in boxing set)
-        if (L1_.on_press) {
-          planner_facing_angle_ += M_PI / 4;
-          if constexpr (DEBUG_LOGGING) {
-            std::cout << "[GamepadManager DEBUG] L1 - Facing angle: " << planner_facing_angle_ << " rad" << std::endl;
-          }
-        }
         if (R1_.on_press) {
-          planner_facing_angle_ -= M_PI / 4;
+          planner_use_movement_mode_ += 1;
+          if (planner_use_movement_mode_ > 6) { planner_use_movement_mode_ = 0; }
+          if (planner_use_movement_mode_ == 4) { planner_use_height_ = 0.8; }
           if constexpr (DEBUG_LOGGING) {
-            std::cout << "[GamepadManager DEBUG] R1 - Facing angle: " << planner_facing_angle_ << " rad" << std::endl;
+            std::cout << "[GamepadManager DEBUG] R1 pressed - Movement mode changed to: "
+                      << planner_use_movement_mode_ << std::endl;
           }
         }
-
-        // L2/R2 - Height control (squat set only)
-        if (motion_set_index_ == 1) {
-          if (L2_.on_press) {
-            planner_use_height_ -= 0.1;
-            planner_use_height_ = std::max(planner_use_height_, 0.2);
+        if (R2_.pressed) {
+          if (planner_use_movement_mode_ < 4) {
+            planner_use_movement_speed_ += 0.02;
             if constexpr (DEBUG_LOGGING) {
-              std::cout << "[GamepadManager DEBUG] L2 - Height: " << planner_use_height_ << std::endl;
+              std::cout << "[GamepadManager DEBUG] R2 pressed - Speed increasing: "
+                        << planner_use_movement_speed_ << std::endl;
+            }
+          } else {
+            planner_use_height_ += 0.02;
+            if constexpr (DEBUG_LOGGING) {
+              std::cout << "[GamepadManager DEBUG] R2 pressed - Height increasing: "
+                        << planner_use_height_ << std::endl;
             }
           }
-          if (R2_.on_press) {
-            planner_use_height_ += 0.1;
-            planner_use_height_ = std::min(planner_use_height_, 0.8);
+        }
+        if (L2_.pressed) {
+          if (planner_use_movement_mode_ < 4) {
+            planner_use_movement_speed_ -= 0.02;
             if constexpr (DEBUG_LOGGING) {
-              std::cout << "[GamepadManager DEBUG] R2 - Height: " << planner_use_height_ << std::endl;
+              std::cout << "[GamepadManager DEBUG] L2 pressed - Speed decreasing: "
+                        << planner_use_movement_speed_ << std::endl;
+            }
+          } else {
+            planner_use_height_ -= 0.02;
+            if constexpr (DEBUG_LOGGING) {
+              std::cout << "[GamepadManager DEBUG] L2 pressed - Height decreasing: "
+                        << planner_use_height_ << std::endl;
             }
           }
         }
-      }
 
-      // Process timed crawling transitions (kneel → crawl → elbow)
-      processCrawlingTransitions();
+        clampOfficialPlannerMode();
 
-      // Analog sticks - facing and movement direction
-      if (std::abs(rx_) > dead_zone_ || std::abs(ry_) > dead_zone_) {
-        planner_facing_angle_ = planner_facing_angle_ - 0.02 * rx_;
-        if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GamepadManager DEBUG] Right stick - Facing angle: " << planner_facing_angle_ << " rad" << std::endl;
+        if (std::abs(rx_) > dead_zone_ || std::abs(ry_) > dead_zone_) {
+          planner_facing_angle_ = planner_facing_angle_ - 0.02 * rx_;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] Right stick - Facing angle: "
+                      << planner_facing_angle_ << " rad" << std::endl;
+          }
         }
-      }
 
-      if (std::abs(lx_) > dead_zone_ || std::abs(ly_) > dead_zone_) {
-        double raw_angle = atan2(ly_, lx_);
-        double bin_size = M_PI / 4.0;  // 8 directions (45° bins)
-        double binned_angle = std::round(raw_angle / bin_size) * bin_size;
-        planner_moving_direction_ = binned_angle - M_PI / 2 + planner_facing_angle_;
-        if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GamepadManager DEBUG] Left stick - Raw: " << raw_angle
-                    << ", Binned: " << binned_angle
-                    << ", Moving: " << planner_moving_direction_ << " rad" << std::endl;
+        if (std::abs(lx_) > dead_zone_ || std::abs(ly_) > dead_zone_) {
+          planner_moving_direction_ = atan2(ly_, lx_) - M_PI / 2 + planner_facing_angle_;
+          if constexpr (DEBUG_LOGGING) {
+            std::cout << "[GamepadManager DEBUG] Left stick - Moving direction: "
+                      << planner_moving_direction_ << " rad" << std::endl;
+          }
         }
       }
     }
 
-    // Handle gamepad planner input (called from handle_input())
+    void handleGamepadMotionInput(MotionDataReader& motion_reader,
+                                  std::shared_ptr<const MotionSequence>& current_motion,
+                                  int& current_frame,
+                                  OperatorState& operator_state,
+                                  bool& reinitialize_heading,
+                                  DataBuffer<HeadingState>& heading_state_buffer,
+                                  std::mutex& current_motion_mutex) {
+      if (motion_prev_ && !motion_reader.motions.empty()) {
+        motion_reader.current_motion_index_ =
+            (motion_reader.current_motion_index_ - 1 + motion_reader.motions.size()) % motion_reader.motions.size();
+        {
+          std::lock_guard<std::mutex> lock(current_motion_mutex);
+          operator_state.play = false;
+          current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          current_frame = 0;
+          reinitialize_heading = true;
+        }
+      }
+
+      if (motion_next_ && !motion_reader.motions.empty()) {
+        motion_reader.current_motion_index_ = (motion_reader.current_motion_index_ + 1) % motion_reader.motions.size();
+        {
+          std::lock_guard<std::mutex> lock(current_motion_mutex);
+          operator_state.play = false;
+          current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          current_frame = 0;
+          reinitialize_heading = true;
+        }
+      }
+
+      if (play_motion_) {
+        std::lock_guard<std::mutex> lock(current_motion_mutex);
+        operator_state.play = true;
+      }
+
+      if (motion_restart_) {
+        std::lock_guard<std::mutex> lock(current_motion_mutex);
+        operator_state.play = false;
+        current_frame = 0;
+        reinitialize_heading = true;
+      }
+
+      if (start_control_) { operator_state.start = true; }
+
+      if (reinitialize_) {
+        std::lock_guard<std::mutex> lock(current_motion_mutex);
+        reinitialize_heading = true;
+      }
+    }
+
+    void handlePlannerToggle(MotionDataReader& motion_reader,
+                             std::shared_ptr<const MotionSequence>& current_motion,
+                             int& current_frame,
+                             OperatorState& operator_state,
+                             bool& reinitialize_heading,
+                             bool has_planner,
+                             PlannerState& planner_state,
+                             DataBuffer<MovementState>& movement_state_buffer,
+                             std::mutex& current_motion_mutex) {
+      if (use_planner_ && !has_planner) {
+        std::cout << "[GamepadManager] Planner not loaded - cannot enable" << std::endl;
+        use_planner_ = false;
+      }
+
+      if (has_planner && planner_state.enabled != use_planner_) {
+        planner_state.enabled = use_planner_;
+        if (planner_state.enabled) {
+          std::cout << "[GamepadManager] Planner enabled" << std::endl;
+          planner_facing_angle_ = 0.0;
+          {
+            std::lock_guard<std::mutex> lock(current_motion_mutex);
+            operator_state.play = false;
+          }
+
+          auto wait_start = std::chrono::steady_clock::now();
+          constexpr auto PLANNER_INIT_TIMEOUT = std::chrono::seconds(5);
+          while (planner_state.enabled) {
+            {
+              std::lock_guard<std::mutex> lock(current_motion_mutex);
+              if (current_motion && current_motion->name == "planner_motion") {
+                std::cout << "[GamepadManager] motion name is planner_motion" << std::endl;
+                break;
+              }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            auto elapsed = std::chrono::steady_clock::now() - wait_start;
+            if (elapsed > PLANNER_INIT_TIMEOUT) {
+              std::cerr << "[GamepadManager ERROR] Planner initialization timeout after 5 seconds" << std::endl;
+              use_planner_ = false;
+              planner_state.enabled = false;
+              movement_state_buffer.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                          {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+              {
+                std::lock_guard<std::mutex> lock(current_motion_mutex);
+                operator_state.play = false;
+                if (!motion_reader.motions.empty()) {
+                  current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+                }
+                current_frame = 0;
+              }
+              return;
+            }
+            std::cout << "[GamepadManager] Waiting for planner to be initialized" << std::endl;
+          }
+
+          if (!planner_state.enabled || !planner_state.initialized) {
+            std::cout << "[GamepadManager] Planner failed to initialize." << std::endl;
+            use_planner_ = false;
+            movement_state_buffer.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+            {
+              std::lock_guard<std::mutex> lock(current_motion_mutex);
+              operator_state.play = false;
+              if (!motion_reader.motions.empty()) {
+                current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+              }
+              current_frame = 0;
+            }
+          } else {
+            std::lock_guard<std::mutex> lock(current_motion_mutex);
+            operator_state.play = true;
+          }
+        } else {
+          std::cout << "[GamepadManager] Planner disabled" << std::endl;
+          planner_state.initialized = false;
+          movement_state_buffer.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                      {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+          {
+            std::lock_guard<std::mutex> lock(current_motion_mutex);
+            operator_state.play = false;
+            reinitialize_heading = true;
+            if (!motion_reader.motions.empty()) {
+              current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+            }
+            current_frame = 0;
+          }
+        }
+      }
+    }
+
+    void clampOfficialPlannerMode() {
+      switch (planner_use_movement_mode_) {
+        case 0:
+          planner_use_movement_speed_ = -1.0;
+          planner_use_height_ = -1.0;
+          break;
+        case 1:
+          planner_use_movement_speed_ = std::clamp(planner_use_movement_speed_, 0.2, 0.8);
+          planner_use_height_ = -1.0;
+          break;
+        case 2:
+          planner_use_movement_speed_ = std::clamp(planner_use_movement_speed_, 0.8, 1.5);
+          planner_use_height_ = -1.0;
+          break;
+        case 3:
+          planner_use_movement_speed_ = std::clamp(planner_use_movement_speed_, 1.5, 3.0);
+          planner_use_height_ = -1.0;
+          break;
+        case 4:
+        case 5:
+        case 6:
+          planner_use_movement_speed_ = -1.0;
+          planner_use_height_ = std::clamp(planner_use_height_, 0.1, 0.8);
+          break;
+      }
+    }
+
+    // Handle gamepad input (called from handle_input())
     void handleGamepadPlannerInput(MotionDataReader& motion_reader,
                                    std::shared_ptr<const MotionSequence>& current_motion,
                                    int& current_frame,
@@ -1018,6 +1119,12 @@ class GamepadManager : public InputInterface {
     // ------------------------------------------------------------------
     bool start_control_ = false;           ///< Start-button pressed this frame.
     bool stop_control_ = false;            ///< Select-button pressed this frame.
+    bool motion_prev_ = false;             ///< Switch to previous reference motion.
+    bool motion_next_ = false;             ///< Switch to next reference motion.
+    bool play_motion_ = false;             ///< Start / resume reference motion playback.
+    bool motion_restart_ = false;          ///< Reset current reference motion to frame 0.
+    bool delta_left_ = false;              ///< Nudge heading left in motion mode.
+    bool delta_right_ = false;             ///< Nudge heading right in motion mode.
     bool reinitialize_ = false;            ///< X/Y-button reinitialize heading.
     bool planner_emergency_stop_ = false;  ///< A-button emergency stop.
 
@@ -1050,8 +1157,9 @@ class GamepadManager : public InputInterface {
     // ------------------------------------------------------------------
     // Planner control state (persists across frames)
     // ------------------------------------------------------------------
+    bool use_planner_ = false;  ///< True while F1-selected planner mode is active.
     int planner_use_movement_mode_ = static_cast<int>(LocomotionMode::SLOW_WALK);  ///< Current locomotion mode.
-    double planner_use_movement_speed_ = 0.4;    ///< Desired speed (fixed per mode).
+    double planner_use_movement_speed_ = -1.0;   ///< Desired speed (-1 = mode default).
     double planner_use_height_ = -1.0;            ///< Desired body height (−1 = mode default).
     double planner_facing_angle_ = 0.0;           ///< Accumulated facing direction (radians).
     double planner_moving_direction_ = 0.0;       ///< Current movement direction (radians).
@@ -1074,5 +1182,3 @@ class GamepadManager : public InputInterface {
 };
 
 #endif // GAMEPAD_MANAGER_HPP
-
-

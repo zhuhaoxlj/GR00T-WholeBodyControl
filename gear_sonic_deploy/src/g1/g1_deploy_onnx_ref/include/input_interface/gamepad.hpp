@@ -486,6 +486,22 @@ class Gamepad : public InputInterface {
       left.update(key_data.btn.components.left);
     }
 
+    std::optional<bool> GetPlannerModeEnabled() const override {
+      return use_planner;
+    }
+
+    std::optional<int> GetPlannerLocomotionMode() const override {
+      return planner_use_movement_mode;
+    }
+
+    std::optional<double> GetPlannerMovementSpeed() const override {
+      return planner_use_movement_speed;
+    }
+
+    std::optional<double> GetPlannerHeight() const override {
+      return planner_use_height;
+    }
+
     // Override the handle_input function from InputInterface
     // This processes the gamepad input flags and performs actions using the provided parameters
     void handle_input(MotionDataReader& motion_reader,

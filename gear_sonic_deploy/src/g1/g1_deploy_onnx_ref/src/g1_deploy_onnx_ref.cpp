@@ -223,6 +223,7 @@ class G1Deploy {
     std::chrono::steady_clock::time_point last_motion_reload_check_{};
     static constexpr std::chrono::milliseconds MOTION_RELOAD_CHECK_INTERVAL{500};
     std::chrono::steady_clock::time_point last_sonic_status_write_{};
+    std::string last_sonic_status_signature_;
     static constexpr std::chrono::milliseconds SONIC_STATUS_WRITE_INTERVAL{200};
     
     // current_motion_mutex_ protects motion_reader_.motions/current_motion_index_,
@@ -2208,8 +2209,6 @@ class G1Deploy {
                           int current_frame_snapshot = -1) {
       if (sonic_status_file_path_.empty()) { return; }
       auto now = std::chrono::steady_clock::now();
-      if (now - last_sonic_status_write_ < SONIC_STATUS_WRITE_INTERVAL) { return; }
-      last_sonic_status_write_ = now;
 
       if (!current_motion_snapshot) {
         std::lock_guard<std::mutex> lock(current_motion_mutex_);
@@ -2220,9 +2219,32 @@ class G1Deploy {
       auto movement_data = movement_state_buffer_.GetDataWithTime();
       MovementState movement_state;
       if (movement_data.data) { movement_state = *movement_data.data; }
-      bool planner_enabled = planner_ && planner_->planner_state_.enabled;
+      auto input_planner_mode = input_interface_ ? input_interface_->GetPlannerModeEnabled() : std::optional<bool>{};
+      auto input_locomotion_mode = input_interface_ ? input_interface_->GetPlannerLocomotionMode() : std::optional<int>{};
+      auto input_movement_speed = input_interface_ ? input_interface_->GetPlannerMovementSpeed() : std::optional<double>{};
+      auto input_height = input_interface_ ? input_interface_->GetPlannerHeight() : std::optional<double>{};
+      bool planner_enabled = input_planner_mode.value_or(planner_ && planner_->planner_state_.enabled);
       bool planner_initialized = planner_ && planner_->planner_state_.initialized;
+      int locomotion_mode = input_locomotion_mode.value_or(movement_state.locomotion_mode);
+      double movement_speed = input_movement_speed.value_or(movement_state.movement_speed);
+      double height = input_height.value_or(movement_state.height);
       std::string motion_name = current_motion_snapshot ? current_motion_snapshot->name : "";
+
+      std::ostringstream signature;
+      signature << ProgramStateName() << '|'
+                << (planner_enabled ? "planner" : "motion") << '|'
+                << (planner_initialized ? "init" : "not_init") << '|'
+                << movement_state.locomotion_mode << '|'
+                << movement_state.movement_speed << '|'
+                << movement_state.height << '|'
+                << motion_name;
+      const std::string current_signature = signature.str();
+      if (current_signature == last_sonic_status_signature_ &&
+          now - last_sonic_status_write_ < SONIC_STATUS_WRITE_INTERVAL) {
+        return;
+      }
+      last_sonic_status_signature_ = current_signature;
+      last_sonic_status_write_ = now;
 
       std::ostringstream out;
       out << "{\n";
@@ -2232,10 +2254,10 @@ class G1Deploy {
       out << "  \"sonic_mode\": \"" << (planner_enabled ? "planner" : "motion") << "\",\n";
       out << "  \"planner_enabled\": " << (planner_enabled ? "true" : "false") << ",\n";
       out << "  \"planner_initialized\": " << (planner_initialized ? "true" : "false") << ",\n";
-      out << "  \"locomotion_mode\": " << movement_state.locomotion_mode << ",\n";
-      out << "  \"locomotion_mode_name\": \"" << LocomotionModeName(movement_state.locomotion_mode) << "\",\n";
-      out << "  \"movement_speed\": " << movement_state.movement_speed << ",\n";
-      out << "  \"height\": " << movement_state.height << ",\n";
+      out << "  \"locomotion_mode\": " << locomotion_mode << ",\n";
+      out << "  \"locomotion_mode_name\": \"" << LocomotionModeName(locomotion_mode) << "\",\n";
+      out << "  \"movement_speed\": " << movement_speed << ",\n";
+      out << "  \"height\": " << height << ",\n";
       out << "  \"current_motion\": \"" << JsonEscape(motion_name) << "\",\n";
       out << "  \"current_frame\": " << current_frame_snapshot << "\n";
       out << "}\n";
