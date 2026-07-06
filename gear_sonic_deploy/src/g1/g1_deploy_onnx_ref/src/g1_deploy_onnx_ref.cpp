@@ -68,6 +68,7 @@
 #include <chrono>
 #include <algorithm>
 #include <numeric>
+#include <nlohmann/json.hpp>
 
 // DDS
 #include <unitree/robot/channel/channel_publisher.hpp>
@@ -218,6 +219,7 @@ class G1Deploy {
     std::string motion_data_path_;
     std::string motion_catalog_path_;
     std::filesystem::path motion_reload_flag_path_;
+    std::filesystem::path motion_playback_request_path_;
     std::filesystem::path sonic_status_file_path_;
     std::optional<std::filesystem::file_time_type> last_motion_reload_flag_mtime_;
     std::chrono::steady_clock::time_point last_motion_reload_check_{};
@@ -225,6 +227,13 @@ class G1Deploy {
     std::chrono::steady_clock::time_point last_sonic_status_write_{};
     std::string last_sonic_status_signature_;
     static constexpr std::chrono::milliseconds SONIC_STATUS_WRITE_INTERVAL{200};
+    std::string last_motion_playback_request_id_;
+    bool playback_group_active_ = false;
+    std::string playback_group_id_;
+    std::string playback_group_name_;
+    std::vector<std::string> playback_group_motion_names_;
+    std::vector<int> playback_group_motion_indices_;
+    size_t playback_group_position_ = 0;
     
     // current_motion_mutex_ protects motion_reader_.motions/current_motion_index_,
     // current_motion_, and current_frame_ during motion switches and hot reloads.
@@ -2210,10 +2219,22 @@ class G1Deploy {
       if (sonic_status_file_path_.empty()) { return; }
       auto now = std::chrono::steady_clock::now();
 
-      if (!current_motion_snapshot) {
+      bool playback_group_active = false;
+      std::string playback_group_id;
+      std::string playback_group_name;
+      std::vector<std::string> playback_group_motion_names;
+      size_t playback_group_position = 0;
+      {
         std::lock_guard<std::mutex> lock(current_motion_mutex_);
-        current_motion_snapshot = current_motion_;
-        current_frame_snapshot = current_frame_;
+        if (!current_motion_snapshot) {
+          current_motion_snapshot = current_motion_;
+          current_frame_snapshot = current_frame_;
+        }
+        playback_group_active = playback_group_active_;
+        playback_group_id = playback_group_id_;
+        playback_group_name = playback_group_name_;
+        playback_group_motion_names = playback_group_motion_names_;
+        playback_group_position = playback_group_position_;
       }
 
       auto movement_data = movement_state_buffer_.GetDataWithTime();
@@ -2237,7 +2258,10 @@ class G1Deploy {
                 << movement_state.locomotion_mode << '|'
                 << movement_state.movement_speed << '|'
                 << movement_state.height << '|'
-                << motion_name;
+                << motion_name << '|'
+                << (playback_group_active ? "group" : "single") << '|'
+                << playback_group_id << '|'
+                << playback_group_position;
       const std::string current_signature = signature.str();
       if (current_signature == last_sonic_status_signature_ &&
           now - last_sonic_status_write_ < SONIC_STATUS_WRITE_INTERVAL) {
@@ -2259,7 +2283,19 @@ class G1Deploy {
       out << "  \"movement_speed\": " << movement_speed << ",\n";
       out << "  \"height\": " << height << ",\n";
       out << "  \"current_motion\": \"" << JsonEscape(motion_name) << "\",\n";
-      out << "  \"current_frame\": " << current_frame_snapshot << "\n";
+      out << "  \"current_frame\": " << current_frame_snapshot << ",\n";
+      out << "  \"playback_group\": {\n";
+      out << "    \"active\": " << (playback_group_active ? "true" : "false") << ",\n";
+      out << "    \"group_id\": \"" << JsonEscape(playback_group_id) << "\",\n";
+      out << "    \"group_name\": \"" << JsonEscape(playback_group_name) << "\",\n";
+      out << "    \"current_index\": " << playback_group_position << ",\n";
+      out << "    \"motion_names\": [";
+      for (size_t i = 0; i < playback_group_motion_names.size(); ++i) {
+        if (i > 0) { out << ", "; }
+        out << "\"" << JsonEscape(playback_group_motion_names[i]) << "\"";
+      }
+      out << "]\n";
+      out << "  }\n";
       out << "}\n";
 
       std::error_code ec;
@@ -2384,6 +2420,7 @@ class G1Deploy {
 
       {
         std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        ClearMotionGroupPlaybackLocked();
         motion_reader_ = std::move(new_reader);
         motion_catalog_ = std::move(new_catalog);
         motion_reader_.current_motion_index_ = new_index;
@@ -2447,6 +2484,7 @@ class G1Deploy {
 
       {
         std::lock_guard<std::mutex> lock(this->current_motion_mutex_);
+        this->ClearMotionGroupPlaybackLocked();
         this->motion_reader_.current_motion_index_ = motion_index;
         this->current_motion_ = selected_motion;
         this->current_frame_ = 0;
@@ -2457,6 +2495,132 @@ class G1Deploy {
 
       std::cout << "[GlobalCommand] Playing motion '" << entry.id << "' (" << entry.display_name
                 << ") from frame 0" << std::endl;
+      return true;
+    }
+
+    void ClearMotionGroupPlaybackLocked() {
+      playback_group_active_ = false;
+      playback_group_id_.clear();
+      playback_group_name_.clear();
+      playback_group_motion_names_.clear();
+      playback_group_motion_indices_.clear();
+      playback_group_position_ = 0;
+    }
+
+    bool ApplyMotionGroupPlaybackRequest() {
+      if (motion_playback_request_path_.empty()) { return false; }
+      std::error_code ec;
+      if (!std::filesystem::exists(motion_playback_request_path_, ec) || ec) { return false; }
+
+      nlohmann::json request;
+      try {
+        std::ifstream input(motion_playback_request_path_);
+        if (!input) { return false; }
+        input >> request;
+      } catch (const std::exception& e) {
+        std::cerr << "[MotionGroup] Failed to read playback request: " << e.what() << std::endl;
+        return false;
+      }
+
+      const std::string request_id = request.value("request_id", "");
+      if (request_id.empty() || request_id == last_motion_playback_request_id_) { return false; }
+      last_motion_playback_request_id_ = request_id;
+
+      if (request.value("type", "") != "motion_group" || !request.contains("motion_names") ||
+          !request["motion_names"].is_array()) {
+        std::cerr << "[MotionGroup] Invalid playback request: expected type=motion_group with motion_names" << std::endl;
+        return false;
+      }
+
+      std::vector<std::string> motion_names;
+      std::vector<int> motion_indices;
+      for (const auto& item : request["motion_names"]) {
+        if (!item.is_string()) {
+          std::cerr << "[MotionGroup] Invalid motion name in request" << std::endl;
+          return false;
+        }
+        std::string motion_name = item.get<std::string>();
+        int motion_index = FindMotionIndexByName(motion_reader_, motion_name);
+        if (motion_index < 0) {
+          std::cerr << "[MotionGroup] Requested motion not loaded: " << motion_name << std::endl;
+          return false;
+        }
+        motion_names.push_back(motion_name);
+        motion_indices.push_back(motion_index);
+      }
+      if (motion_indices.empty()) {
+        std::cerr << "[MotionGroup] Playback request has no motions" << std::endl;
+        return false;
+      }
+
+      auto selected_motion = motion_reader_.GetMotionShared(static_cast<size_t>(motion_indices.front()));
+      if (!selected_motion) {
+        std::cerr << "[MotionGroup] First motion index is invalid" << std::endl;
+        return false;
+      }
+
+      movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
+                                                   {0.0f, 0.0f, 0.0f},
+                                                   {1.0f, 0.0f, 0.0f}, -1.0f, -1.0f));
+      if (planner_) {
+        planner_->planner_state_.enabled = false;
+        planner_->planner_state_.initialized = false;
+      }
+      if (planner_motion_) { planner_motion_->timesteps = 0; }
+
+      const std::string group_id = request.value("group_id", "");
+      const std::string group_name = request.value("group_name", "");
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        playback_group_active_ = true;
+        playback_group_id_ = group_id;
+        playback_group_name_ = group_name;
+        playback_group_motion_names_ = motion_names;
+        playback_group_motion_indices_ = motion_indices;
+        playback_group_position_ = 0;
+        motion_reader_.current_motion_index_ = motion_indices.front();
+        current_motion_ = selected_motion;
+        current_frame_ = 0;
+        saved_frame_for_observation_window_ = 0;
+        reinitialize_heading_ = true;
+        operator_state.start = true;
+        operator_state.play = true;
+      }
+
+      std::cout << "[MotionGroup] Playing group '" << group_name << "' with "
+                << motion_indices.size() << " motions from frame 0" << std::endl;
+      return true;
+    }
+
+    bool AdvanceMotionGroupPlaybackLocked() {
+      if (!playback_group_active_ || playback_group_motion_indices_.empty()) { return false; }
+      if (playback_group_position_ + 1 < playback_group_motion_indices_.size()) {
+        playback_group_position_++;
+        int next_index = playback_group_motion_indices_[playback_group_position_];
+        auto next_motion = motion_reader_.GetMotionShared(static_cast<size_t>(next_index));
+        if (!next_motion) {
+          std::cerr << "[MotionGroup] Next motion index is invalid: " << next_index << std::endl;
+          operator_state.play = false;
+          ClearMotionGroupPlaybackLocked();
+          return true;
+        }
+        motion_reader_.current_motion_index_ = next_index;
+        current_motion_ = next_motion;
+        current_frame_ = 0;
+        saved_frame_for_observation_window_ = 0;
+        operator_state.play = true;
+        std::cout << "[MotionGroup] Continuing with motion "
+                  << (playback_group_position_ + 1) << "/"
+                  << playback_group_motion_indices_.size() << ": "
+                  << next_motion->name << std::endl;
+        return true;
+      }
+
+      operator_state.play = false;
+      current_frame_ = std::max(0, current_motion_->timesteps - 1);
+      std::cout << "[MotionGroup] Group '" << playback_group_name_
+                << "' completed at final frame " << current_frame_ << std::endl;
+      playback_group_active_ = false;
       return true;
     }
 
@@ -2527,6 +2691,7 @@ class G1Deploy {
       motion_data_path_ = motion_data_path;
       motion_catalog_path_ = motion_catalog_path;
       motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
+      motion_playback_request_path_ = std::filesystem::path(motion_data_path_) / ".motion_playback_request.json";
       sonic_status_file_path_ = std::filesystem::path(motion_data_path_) / ".sonic_status.json";
       last_motion_reload_check_ = std::chrono::steady_clock::now();
       std::error_code reload_flag_error;
@@ -3729,7 +3894,6 @@ class G1Deploy {
         // Check if motion completed (reached the end)
         if (current_motion_->name != "streamed") {
           if (current_frame_ >= current_motion_->timesteps) {
-            operator_state.play = false;
             if (current_motion_ ->name != "temporary_motion") {
               FootTrajectoryEvent::WriteEvent(
                   "end",
@@ -3743,6 +3907,10 @@ class G1Deploy {
             } else {
               std::cout << "Temporary motion completed." << std::endl;
             }
+            if (AdvanceMotionGroupPlaybackLocked()) {
+              return true;
+            }
+            operator_state.play = false;
             current_frame_ = 0; // Reset to beginning
             // Total reset: both base quaternion and delta heading
             reinitialize_heading_ = true;
@@ -3840,6 +4008,22 @@ class G1Deploy {
         input_interface_->handle_input(motion_reader_, current_motion_, current_frame_, operator_state,
                                       reinitialize_heading_, heading_state_buffer_, has_planner, planner_state, movement_state_buffer_, current_motion_mutex_, report_temperature_);
       }
+
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        if (playback_group_active_) {
+          bool planner_active = has_planner && planner_ && planner_->planner_state_.enabled;
+          bool queue_current_matches = playback_group_position_ < playback_group_motion_indices_.size() &&
+              motion_reader_.current_motion_index_ == playback_group_motion_indices_[playback_group_position_];
+          bool unsupported_motion = current_motion_ &&
+              (current_motion_ == planner_motion_ || current_motion_->name == "streamed");
+          if (operator_state.stop || planner_active || unsupported_motion || !queue_current_matches) {
+            ClearMotionGroupPlaybackLocked();
+          }
+        }
+      }
+
+      this->ApplyMotionGroupPlaybackRequest();
 
       if (playback_input_file_ && program_state_ == ProgramState::CONTROL) {
         std::string line;

@@ -50,7 +50,10 @@ EXPECTED_COLUMNS = {
 }
 MOTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 MOTION_ALIAS_FILE = MOTION_DIR / ".motion_aliases.json"
+MOTION_GROUPS_FILE = MOTION_DIR / ".motion_groups.json"
+MOTION_PLAYBACK_REQUEST_FILE = MOTION_DIR / ".motion_playback_request.json"
 MOTION_ALIAS_MAX_LENGTH = 80
+MOTION_GROUP_NAME_MAX_LENGTH = 80
 PRESET_MOTION_NAMES = {
     "dance_in_da_party_001__A464",
     "dance_in_da_party_001__A464_M",
@@ -132,6 +135,18 @@ def clean_motion_alias(alias: str | None) -> str | None:
     return cleaned
 
 
+def clean_motion_group_name(name: str | None) -> str:
+    cleaned = " ".join((name or "").strip().split())
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Motion group name is required")
+    if len(cleaned) > MOTION_GROUP_NAME_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Motion group name must be <= {MOTION_GROUP_NAME_MAX_LENGTH} characters",
+        )
+    return cleaned
+
+
 def read_motion_aliases() -> dict[str, str]:
     try:
         data = json.loads(MOTION_ALIAS_FILE.read_text())
@@ -156,6 +171,130 @@ def set_motion_alias(motion_name: str, alias: str | None) -> None:
     else:
         aliases.pop(motion_name, None)
     write_motion_aliases(aliases)
+
+
+def read_motion_groups() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(MOTION_GROUPS_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_groups = data.get("groups") if isinstance(data, dict) else data
+    if not isinstance(raw_groups, list):
+        return []
+    groups: list[dict[str, Any]] = []
+    for group in raw_groups:
+        if not isinstance(group, dict):
+            continue
+        group_id = str(group.get("id") or "").strip()
+        name = str(group.get("name") or "").strip()
+        motion_names = group.get("motion_names")
+        if not group_id or not name or not isinstance(motion_names, list):
+            continue
+        cleaned_motion_names: list[str] = []
+        for motion_name in motion_names:
+            try:
+                cleaned_motion_names.append(safe_motion_name(str(motion_name)))
+            except HTTPException:
+                continue
+        groups.append({
+            "id": group_id,
+            "name": name,
+            "motion_names": cleaned_motion_names,
+            "created_at": group.get("created_at"),
+            "updated_at": group.get("updated_at"),
+        })
+    return groups
+
+
+def write_motion_groups(groups: list[dict[str, Any]]) -> None:
+    ensure_motion_dir()
+    MOTION_GROUPS_FILE.write_text(
+        json.dumps({"groups": groups}, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+
+
+def motion_exists(motion_name: str) -> bool:
+    path = assert_under_motion_dir(MOTION_DIR / motion_name)
+    return path.exists() and path.is_dir() and not path.is_symlink()
+
+
+def validate_motion_names(motion_names: list[Any]) -> list[str]:
+    if not isinstance(motion_names, list):
+        raise HTTPException(status_code=400, detail="motion_names must be a list")
+    cleaned: list[str] = []
+    for raw_name in motion_names:
+        motion_name = safe_motion_name(str(raw_name))
+        if not motion_exists(motion_name):
+            raise HTTPException(status_code=400, detail=f"Motion not found: {motion_name}")
+        cleaned.append(motion_name)
+    return cleaned
+
+
+def group_with_motion_details(group: dict[str, Any], aliases: dict[str, str] | None = None) -> dict[str, Any]:
+    aliases = aliases if aliases is not None else read_motion_aliases()
+    motions = []
+    valid_motion_names = []
+    for motion_name in group["motion_names"]:
+        if not motion_exists(motion_name):
+            continue
+        motion_path = MOTION_DIR / motion_name
+        validation = validate_motion_dir(motion_path, strict=False)
+        motions.append({
+            "name": motion_name,
+            "alias": aliases.get(motion_name),
+            "display_name": aliases.get(motion_name) or motion_name,
+            "valid": validation["valid"],
+            "errors": validation["errors"],
+            "timesteps": validation["metadata_timesteps"] or next(iter(validation["rows"].values()), None),
+        })
+        valid_motion_names.append(motion_name)
+    return {
+        **group,
+        "motion_names": valid_motion_names,
+        "motions": motions,
+    }
+
+
+def find_motion_group(group_id: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    groups = read_motion_groups()
+    for group in groups:
+        if group["id"] == group_id:
+            return groups, group
+    raise HTTPException(status_code=404, detail="Motion group not found")
+
+
+def remove_motion_from_groups(motion_name: str) -> None:
+    groups = read_motion_groups()
+    changed = False
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    for group in groups:
+        next_motion_names = [name for name in group["motion_names"] if name != motion_name]
+        if len(next_motion_names) != len(group["motion_names"]):
+            group["motion_names"] = next_motion_names
+            group["updated_at"] = timestamp
+            changed = True
+    if changed:
+        write_motion_groups(groups)
+
+
+def write_motion_playback_request(group: dict[str, Any]) -> dict[str, Any]:
+    if not group["motion_names"]:
+        raise HTTPException(status_code=400, detail="Motion group is empty")
+    motion_names = validate_motion_names(group["motion_names"])
+    request_id = uuid.uuid4().hex
+    payload = {
+        "request_id": request_id,
+        "type": "motion_group",
+        "group_id": group["id"],
+        "group_name": group["name"],
+        "motion_names": motion_names,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    ensure_motion_dir()
+    MOTION_PLAYBACK_REQUEST_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    return payload
 
 
 def is_user_uploaded_motion(motion_name: str) -> bool:
@@ -345,6 +484,7 @@ def normalize_sonic_status(raw: dict[str, Any] | None, source: str, stamp: float
             "height": raw.get("height"),
             "groups": PLANNER_MODE_GROUPS,
         },
+        "playback_group": raw.get("playback_group") if isinstance(raw.get("playback_group"), dict) else None,
         "current_action": current_action,
     }
 
@@ -472,6 +612,58 @@ def list_motions() -> dict:
     return {"motion_dir": str(MOTION_DIR), "motions": motions}
 
 
+@app.get("/api/motion-groups")
+def list_motion_groups() -> dict:
+    aliases = read_motion_aliases()
+    groups = [group_with_motion_details(group, aliases) for group in read_motion_groups()]
+    return {"groups": groups}
+
+
+@app.post("/api/motion-groups")
+def create_motion_group(payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    groups = read_motion_groups()
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    group = {
+        "id": uuid.uuid4().hex,
+        "name": clean_motion_group_name(payload.get("name")),
+        "motion_names": validate_motion_names(payload.get("motion_names", [])),
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    groups.append(group)
+    write_motion_groups(groups)
+    return {"ok": True, "group": group_with_motion_details(group)}
+
+
+@app.patch("/api/motion-groups/{group_id}")
+def update_motion_group(group_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    groups, group = find_motion_group(group_id)
+    if "name" in payload:
+        group["name"] = clean_motion_group_name(payload.get("name"))
+    if "motion_names" in payload:
+        group["motion_names"] = validate_motion_names(payload.get("motion_names", []))
+    group["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    write_motion_groups(groups)
+    return {"ok": True, "group": group_with_motion_details(group)}
+
+
+@app.delete("/api/motion-groups/{group_id}")
+def delete_motion_group(group_id: str) -> dict:
+    groups = read_motion_groups()
+    next_groups = [group for group in groups if group["id"] != group_id]
+    if len(next_groups) == len(groups):
+        raise HTTPException(status_code=404, detail="Motion group not found")
+    write_motion_groups(next_groups)
+    return {"ok": True, "group": group_id}
+
+
+@app.post("/api/motion-groups/{group_id}/play")
+def play_motion_group(group_id: str) -> dict:
+    _, group = find_motion_group(group_id)
+    request = write_motion_playback_request(group)
+    return {"ok": True, "request_id": request["request_id"], "request": request}
+
+
 @app.post("/api/reload")
 def request_reload() -> dict:
     touch_reload_flag()
@@ -558,5 +750,6 @@ def delete_motion(name: str) -> dict:
     target = assert_under_motion_dir(MOTION_DIR / ".trash" / trash_name)
     shutil.move(str(source), str(target))
     set_motion_alias(motion_name, None)
+    remove_motion_from_groups(motion_name)
     touch_reload_flag()
     return {"ok": True, "motion": motion_name, "trash": str(target)}

@@ -198,6 +198,48 @@
 
     .table-tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .table-wrap { overflow: auto; }
+    .group-layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; align-items: start; }
+    .group-create { display: grid; gap: 10px; }
+    .group-input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.86);
+      color: var(--text);
+      padding: 9px 12px;
+      outline: none;
+    }
+    .group-list { display: grid; gap: 12px; }
+    .group-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.58);
+      overflow: hidden;
+    }
+    .group-card.active { border-color: rgba(52, 211, 153, 0.72); box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.18) inset; }
+    .group-card.drag-over { border-color: #93c5fd; background: rgba(30, 64, 175, 0.22); }
+    .group-head { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .group-title { display: grid; gap: 4px; min-width: 0; }
+    .group-name { font-weight: 850; color: #dbeafe; overflow-wrap: anywhere; }
+    .group-meta { color: var(--muted); font-size: 12px; }
+    .group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .group-drop { min-height: 52px; padding: 10px; display: grid; gap: 8px; }
+    .group-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      border-radius: 8px;
+      background: rgba(30, 41, 59, 0.72);
+    }
+    .group-item.dragging { opacity: 0.48; }
+    .drag-handle { color: #93c5fd; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 800; cursor: grab; }
+    .group-empty { min-height: 44px; display: grid; place-items: center; border: 1px dashed rgba(147, 197, 253, 0.34); border-radius: 8px; color: var(--muted); font-size: 13px; }
+    tr[draggable="true"] { cursor: grab; }
+    tr.dragging { opacity: 0.5; }
     table { width: 100%; min-width: 820px; border-collapse: collapse; }
     th, td { padding: 14px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; background: rgba(15, 23, 42, 0.38); position: sticky; top: 0; }
@@ -217,7 +259,7 @@
     .empty { padding: 42px 18px; text-align: center; color: var(--muted); }
 
     @media (max-width: 980px) {
-      .hero, .grid, .status-grid, .mode-sections, .command-guide { grid-template-columns: 1fr; }
+      .hero, .grid, .status-grid, .mode-sections, .command-guide, .group-layout { grid-template-columns: 1fr; }
       .toolbar { justify-content: flex-start; }
       .app-shell { width: min(100% - 24px, 1440px); padding-top: 14px; }
       .file-row { grid-template-columns: 1fr; }
@@ -281,6 +323,23 @@
       </div>
       <div class="card-body">
         <div id="controlGuide" class="command-guide"></div>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom: 18px;">
+      <div class="card-header">
+        <h2 class="card-title" data-i18n="groupsTitle">动作组</h2>
+        <button class="ghost" onclick="loadMotionGroups()" data-i18n="refreshGroups">刷新动作组</button>
+      </div>
+      <div class="card-body">
+        <div class="group-layout">
+          <div class="group-create">
+            <input id="groupNameInput" class="group-input" type="text" maxlength="80" data-i18n-placeholder="groupNamePlaceholder" placeholder="动作组名称">
+            <button onclick="createMotionGroup()" data-i18n="createGroup">新建动作组</button>
+            <div class="status-box" id="groupStatus" data-i18n="groupReady">可把动作列表中的动作拖入动作组。</div>
+          </div>
+          <div id="groupList" class="group-list"></div>
+        </div>
       </div>
     </section>
 
@@ -369,7 +428,8 @@
         ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：',
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
         commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位',
-        aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名'
+        aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名',
+        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', removeFromGroup: '移除', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -379,17 +439,24 @@
         ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: ',
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
         commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons',
-        aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias'
+        aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias',
+        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', removeFromGroup: 'Remove', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing'
       }
     };
 
     let lang = localStorage.getItem('sonic-motion-lang') || 'zh';
     let lastMotionData = null;
     let lastSonicStatus = null;
+    let lastMotionGroups = null;
     let motionAliases = {};
     let pendingAliasResolve = null;
     let controlScheme = localStorage.getItem('sonic-control-scheme') || 'keyboard';
+    let draggedMotionName = null;
+    let draggedGroupItem = null;
     const statusEl = document.getElementById('status');
+    const groupStatusEl = document.getElementById('groupStatus');
+    const groupListEl = document.getElementById('groupList');
+    const groupNameInput = document.getElementById('groupNameInput');
     const rowsEl = document.getElementById('motionRows');
     const sonicSectionsEl = document.getElementById('sonicModeSections');
     const controlGuideEl = document.getElementById('controlGuide');
@@ -413,13 +480,16 @@
       document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
       languageSelect.value = lang;
       document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(node => { node.placeholder = t(node.dataset.i18nPlaceholder); });
       aliasInput.placeholder = t('aliasPlaceholder');
       if (lastMotionData) renderMotions(lastMotionData);
       if (lastSonicStatus) renderSonicStatus(lastSonicStatus);
+      if (lastMotionGroups) renderMotionGroups(lastMotionGroups);
       renderControlGuide();
     }
 
     function setStatus(message) { statusEl.textContent = message; }
+    function setGroupStatus(message) { groupStatusEl.textContent = message; }
     function sizeText(bytes) {
       if (bytes > 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
       if (bytes > 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -578,6 +648,8 @@
       }
       for (const motion of data.motions) {
         const tr = document.createElement('tr');
+        tr.draggable = true;
+        tr.dataset.motionName = motion.name;
         const badge = motion.valid
           ? `<span class="badge ok">● ${t('ok')}</span>`
           : `<span class="badge bad">● ${t('invalid')}</span>`;
@@ -592,8 +664,199 @@
           <td>${motion.timesteps ?? ''}</td>
           <td>${sizeText(motion.size_bytes)}</td>
           <td class="muted">${escapeHtml(motion.mtime_iso)}</td>`;
+        tr.addEventListener('dragstart', event => {
+          draggedMotionName = motion.name;
+          tr.classList.add('dragging');
+          event.dataTransfer.effectAllowed = 'copy';
+          event.dataTransfer.setData('text/plain', motion.name);
+        });
+        tr.addEventListener('dragend', () => {
+          draggedMotionName = null;
+          tr.classList.remove('dragging');
+        });
         rowsEl.appendChild(tr);
       }
+    }
+
+    function findGroup(groupId) {
+      return ((lastMotionGroups && lastMotionGroups.groups) || []).find(group => group.id === groupId);
+    }
+
+    function groupMotionNames(group) {
+      return (group.motion_names || []).slice();
+    }
+
+    function activePlaybackGroup() {
+      return lastSonicStatus && lastSonicStatus.playback_group && lastSonicStatus.playback_group.active
+        ? lastSonicStatus.playback_group
+        : null;
+    }
+
+    function renderMotionGroups(data) {
+      if (draggedMotionName || draggedGroupItem) return;
+      lastMotionGroups = data;
+      const groups = data.groups || [];
+      const active = activePlaybackGroup();
+      if (!groups.length) {
+        groupListEl.innerHTML = `<div class="empty">${t('groupEmpty')}</div>`;
+        return;
+      }
+      groupListEl.innerHTML = groups.map(group => {
+        const activeClass = active && active.group_id === group.id ? ' active' : '';
+        const activeBadge = active && active.group_id === group.id ? `<span class="badge ok">${t('activeGroup')}</span>` : '';
+        const motions = group.motions || [];
+        const items = motions.map((motion, index) => `
+          <div class="group-item" draggable="true" data-group-id="${escapeHtml(group.id)}" data-index="${index}">
+            <span class="drag-handle">::</span>
+            <span class="motion-name">${motionNameHtml(motion.name)}</span>
+            <button class="secondary mini-action" onclick="removeMotionFromGroup('${escapeHtml(group.id)}', ${index})">${t('removeFromGroup')}</button>
+          </div>`).join('');
+        return `
+          <div class="group-card${activeClass}" data-group-id="${escapeHtml(group.id)}">
+            <div class="group-head">
+              <div class="group-title">
+                <span class="group-name">${escapeHtml(group.name)} ${activeBadge}</span>
+                <span class="group-meta">${t('groupItems', { count: motions.length })}</span>
+              </div>
+              <div class="group-actions">
+                <button class="mini-action" onclick="playMotionGroup('${escapeHtml(group.id)}')">${t('playGroup')}</button>
+                <button class="secondary mini-action" onclick="renameMotionGroup('${escapeHtml(group.id)}')">${t('renameGroup')}</button>
+                <button class="danger mini-action" onclick="deleteMotionGroup('${escapeHtml(group.id)}')">${t('deleteGroup')}</button>
+              </div>
+            </div>
+            <div class="group-drop" data-group-id="${escapeHtml(group.id)}">
+              ${items || `<div class="group-empty">${t('groupDropEmpty')}</div>`}
+            </div>
+          </div>`;
+      }).join('');
+      attachGroupDragHandlers();
+    }
+
+    function attachGroupDragHandlers() {
+      groupListEl.querySelectorAll('.group-card').forEach(card => {
+        card.addEventListener('dragover', event => {
+          event.preventDefault();
+          card.classList.add('drag-over');
+        });
+        card.addEventListener('dragleave', event => {
+          if (!card.contains(event.relatedTarget)) card.classList.remove('drag-over');
+        });
+        card.addEventListener('drop', event => {
+          event.preventDefault();
+          card.classList.remove('drag-over');
+          const groupId = card.dataset.groupId;
+          const item = event.target.closest('.group-item');
+          const targetIndex = item ? Number(item.dataset.index) : null;
+          handleGroupDrop(groupId, targetIndex);
+        });
+      });
+      groupListEl.querySelectorAll('.group-item').forEach(item => {
+        item.addEventListener('dragstart', event => {
+          draggedGroupItem = {
+            groupId: item.dataset.groupId,
+            index: Number(item.dataset.index),
+          };
+          item.classList.add('dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', `group:${item.dataset.groupId}:${item.dataset.index}`);
+        });
+        item.addEventListener('dragend', () => {
+          draggedGroupItem = null;
+          item.classList.remove('dragging');
+        });
+      });
+    }
+
+    async function handleGroupDrop(groupId, targetIndex) {
+      const group = findGroup(groupId);
+      if (!group) return;
+      const names = groupMotionNames(group);
+      if (draggedMotionName) {
+        const insertAt = Number.isInteger(targetIndex) ? targetIndex : names.length;
+        names.splice(insertAt, 0, draggedMotionName);
+        await saveMotionGroup(groupId, { motion_names: names });
+        return;
+      }
+      if (draggedGroupItem && draggedGroupItem.groupId === groupId) {
+        const [moved] = names.splice(draggedGroupItem.index, 1);
+        if (!moved) return;
+        let insertAt = Number.isInteger(targetIndex) ? targetIndex : names.length;
+        if (draggedGroupItem.index < insertAt) insertAt -= 1;
+        names.splice(insertAt, 0, moved);
+        await saveMotionGroup(groupId, { motion_names: names });
+      }
+    }
+
+    async function loadMotionGroups() {
+      try { renderMotionGroups(await api('/api/motion-groups')); }
+      catch (err) { setGroupStatus(t('groupUpdateFailed') + err.message); }
+    }
+
+    async function createMotionGroup() {
+      const name = groupNameInput.value.trim().replace(/\s+/g, ' ');
+      if (!name) return setGroupStatus(t('groupNameRequired'));
+      try {
+        await api('/api/motion-groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, motion_names: [] }),
+        });
+        groupNameInput.value = '';
+        setGroupStatus(t('groupCreated', { name }));
+        await loadMotionGroups();
+      } catch (err) { setGroupStatus(t('groupCreateFailed') + err.message); }
+    }
+
+    async function saveMotionGroup(groupId, patch) {
+      const group = findGroup(groupId);
+      try {
+        const data = await api('/api/motion-groups/' + encodeURIComponent(groupId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        setGroupStatus(t('groupUpdated', { name: data.group.name }));
+        await loadMotionGroups();
+      } catch (err) { setGroupStatus(t('groupUpdateFailed') + err.message); }
+    }
+
+    async function renameMotionGroup(groupId) {
+      const group = findGroup(groupId);
+      if (!group) return;
+      const name = prompt(t('renameGroup'), group.name);
+      if (name === null) return;
+      const cleaned = name.trim().replace(/\s+/g, ' ');
+      if (!cleaned) return setGroupStatus(t('groupNameRequired'));
+      await saveMotionGroup(groupId, { name: cleaned });
+    }
+
+    async function removeMotionFromGroup(groupId, index) {
+      const group = findGroup(groupId);
+      if (!group) return;
+      const names = groupMotionNames(group);
+      names.splice(index, 1);
+      await saveMotionGroup(groupId, { motion_names: names });
+    }
+
+    async function deleteMotionGroup(groupId) {
+      const group = findGroup(groupId);
+      if (!group) return;
+      if (!confirm(t('confirmDeleteGroup', { name: group.name }))) return;
+      try {
+        await api('/api/motion-groups/' + encodeURIComponent(groupId), { method: 'DELETE' });
+        setGroupStatus(t('groupDeleted', { name: group.name }));
+        await loadMotionGroups();
+      } catch (err) { setGroupStatus(t('groupDeleteFailed') + err.message); }
+    }
+
+    async function playMotionGroup(groupId) {
+      const group = findGroup(groupId);
+      if (!group) return;
+      try {
+        await api('/api/motion-groups/' + encodeURIComponent(groupId) + '/play', { method: 'POST' });
+        setGroupStatus(t('groupPlayRequested', { name: group.name }));
+        await loadSonicStatus();
+      } catch (err) { setGroupStatus(t('groupPlayFailed') + err.message); }
     }
 
     function renderChips(items, activeName) {
@@ -605,6 +868,7 @@
 
     function renderSonicStatus(data) {
       lastSonicStatus = data;
+      if (lastMotionGroups) renderMotionGroups(lastMotionGroups);
       const isPlanner = data.sonic_mode === 'planner';
       setText('sonicConnected', data.connected ? t('connected') : t('disconnected'));
       setText('sonicMode', isPlanner ? t('plannerMode') : t('motionMode'));
@@ -665,6 +929,7 @@
         const data = await api('/api/motions/upload', { method: 'POST', body: form });
         setStatus(t('uploaded', { name: data.alias || data.motion }));
         await loadMotions();
+        await loadMotionGroups();
       } catch (err) { setStatus(t('uploadFailed') + err.message); }
     }
 
@@ -683,6 +948,7 @@
         });
         setStatus(t('aliasUpdated', { name: data.alias || data.motion }));
         await loadMotions();
+        await loadMotionGroups();
         await loadSonicStatus();
       } catch (err) { setStatus(t('aliasUpdateFailed') + err.message); }
     }
@@ -700,6 +966,7 @@
         for (const name of selected) await api('/api/motions/' + encodeURIComponent(name), { method: 'DELETE' });
         setStatus(t('deleted'));
         await loadMotions();
+        await loadMotionGroups();
       } catch (err) { setStatus(t('deleteFailed') + err.message); }
     }
 
@@ -719,6 +986,7 @@
     applyLanguage(lang);
     loadSonicStatus();
     loadMotions();
+    loadMotionGroups();
     setInterval(loadSonicStatus, 1000);
   </script>
 </body>

@@ -53,3 +53,11 @@ smpl_pose.csv
 Uploads are validated in `.upload_tmp` and then moved into the motion directory. Deletes are moved to `.trash` and are not permanently removed.
 
 After upload/delete, the manager updates `.motion_reload_request`; the Sonic process detects this flag and hot-reloads the motion list. You can also press `U` in keyboard input mode to reload manually.
+
+## Motion groups
+
+The web UI stores motion groups in `.motion_groups.json` under `SONIC_MOTION_DIR`.
+Playing a group writes `.motion_playback_request.json`; the running Sonic process
+detects that request and plays each referenced motion in order. During group
+playback, intermediate motion endings advance directly to the next clip. The
+final clip stops on its last frame.
