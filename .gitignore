@@ -157,6 +157,13 @@ cython_debug/
 # log
 outputs/
 
+# Sonic Web Manager runtime state
+.motion_aliases.json
+.motion_groups.json
+.motion_playback_request.json
+.motion_reload_request
+.sonic_status.json
+
 # Ruff stuff:
 .ruff_cache/
 
