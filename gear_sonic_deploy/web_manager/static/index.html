@@ -314,8 +314,11 @@
       white-space: nowrap;
     }
     .chip.active, .chip.active .motion-chip-zh, .chip.active .motion-chip-id { background: var(--ink); border-color: var(--ink); color: #ffffff; }
+    .guide-header-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+    .guide-toggle { min-width: 74px; }
     .scheme-toggle { display: inline-flex; gap: 8px; flex-wrap: wrap; }
     .scheme-toggle button.active { background: var(--accent); border-color: #b83a20; color: #ffffff; box-shadow: none; }
+    .guide-scheme-toggle { margin-bottom: 12px; }
     .command-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .command-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: #ffffff; }
     .command-group h3 { margin: 0 0 10px; color: var(--ink); font-size: 13px; }
@@ -493,12 +496,15 @@
     <section class="card guide-card">
       <div class="card-header">
         <h2 class="card-title" data-i18n="commandGuideTitle">切换命令提示</h2>
-        <div class="scheme-toggle" role="group" aria-label="Control scheme">
+        <div class="guide-header-actions">
+          <button id="commandGuideToggle" class="ghost guide-toggle" type="button" aria-expanded="false" aria-controls="commandGuideBody" onclick="toggleCommandGuide()"></button>
+        </div>
+      </div>
+      <div id="commandGuideBody" class="card-body" hidden>
+        <div class="scheme-toggle guide-scheme-toggle" role="group" aria-label="Control scheme">
           <button id="keyboardGuideBtn" class="ghost" onclick="setControlScheme('keyboard')" data-i18n="keyboardGuide">Keyboard 键位</button>
           <button id="gamepadGuideBtn" class="ghost" onclick="setControlScheme('gamepad')" data-i18n="gamepadGuide">Gamepad 键位</button>
         </div>
-      </div>
-      <div class="card-body">
         <div id="controlGuide" class="command-guide"></div>
       </div>
     </section>
@@ -619,7 +625,7 @@
         motionsTitle: '动作列表', deleteSelected: '删除选中', colName: '名称', colStatus: '状态', colTimesteps: '帧数', colSize: '大小', colModified: '修改时间',
         ok: '可用', invalid: '异常', empty: '还没有动作。', loading: '正在加载动作列表...', motionDir: '动作目录：', uploadEmpty: '请选择要上传的文件。', uploading: '正在上传...', uploaded: '已上传 {name}，并请求 Sonic 重载。', uploadFailed: '上传失败：', reloadOk: '已请求 Sonic 重载。', reloadFailed: '请求重载失败：', noSelected: '请先选择动作。', confirmDelete: '确定将 {count} 个动作移动到回收站吗？', deleted: '已删除选中动作，并请求 Sonic 重载。', deleteFailed: '删除失败：',
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
-        commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位',
+        commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位', expandGuide: '展开', collapseGuide: '收起',
         aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名',
         groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中'
       },
@@ -630,7 +636,7 @@
         motionsTitle: 'Motions', deleteSelected: 'Delete selected', colName: 'Name', colStatus: 'Status', colTimesteps: 'Timesteps', colSize: 'Size', colModified: 'Modified',
         ok: 'OK', invalid: 'Invalid', empty: 'No motions yet.', loading: 'Loading motions...', motionDir: 'Motion directory: ', uploadEmpty: 'Please choose files to upload.', uploading: 'Uploading...', uploaded: 'Uploaded {name}. Sonic reload requested.', uploadFailed: 'Upload failed: ', reloadOk: 'Sonic reload requested.', reloadFailed: 'Reload request failed: ', noSelected: 'No motions selected.', confirmDelete: 'Move {count} motion(s) to trash?', deleted: 'Deleted selected motions. Sonic reload requested.', deleteFailed: 'Delete failed: ',
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
-        commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons',
+        commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons', expandGuide: 'Expand', collapseGuide: 'Collapse',
         aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias',
         groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing'
       }
@@ -644,6 +650,7 @@
     let pendingAliasResolve = null;
     let pendingGroupMotionName = null;
     let controlScheme = localStorage.getItem('sonic-control-scheme') || 'keyboard';
+    let commandGuideExpanded = false;
     let draggedMotionName = null;
     const statusEl = document.getElementById('status');
     const groupStatusEl = document.getElementById('groupStatus');
@@ -651,6 +658,8 @@
     const groupNameInput = document.getElementById('groupNameInput');
     const rowsEl = document.getElementById('motionRows');
     const sonicSectionsEl = document.getElementById('sonicModeSections');
+    const commandGuideBody = document.getElementById('commandGuideBody');
+    const commandGuideToggle = document.getElementById('commandGuideToggle');
     const controlGuideEl = document.getElementById('controlGuide');
     const dropZone = document.getElementById('dropZone');
     const aliasModal = document.getElementById('aliasModal');
@@ -683,6 +692,7 @@
       if (lastMotionGroups) renderMotionGroups(lastMotionGroups);
       if (groupPickerModal.classList.contains('open') && pendingGroupMotionName) renderGroupPicker(pendingGroupMotionName);
       renderControlGuide();
+      updateCommandGuideDisclosure();
     }
 
     function setStatus(message) { statusEl.textContent = message; }
@@ -826,6 +836,17 @@
               </div>`).join('')}
           </div>
         </div>`).join('');
+    }
+
+    function updateCommandGuideDisclosure() {
+      commandGuideBody.hidden = !commandGuideExpanded;
+      commandGuideToggle.setAttribute('aria-expanded', commandGuideExpanded ? 'true' : 'false');
+      commandGuideToggle.textContent = t(commandGuideExpanded ? 'collapseGuide' : 'expandGuide');
+    }
+
+    function toggleCommandGuide() {
+      commandGuideExpanded = !commandGuideExpanded;
+      updateCommandGuideDisclosure();
     }
 
     function setControlScheme(nextScheme) {
