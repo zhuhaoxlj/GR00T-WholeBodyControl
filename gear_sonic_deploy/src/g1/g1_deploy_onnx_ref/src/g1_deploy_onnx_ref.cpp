@@ -2589,7 +2589,35 @@ class G1Deploy {
 
       std::cout << "[MotionGroup] Playing group '" << group_name << "' with "
                 << motion_indices.size() << " motions from frame 0" << std::endl;
+      std::error_code remove_error;
+      std::filesystem::remove(motion_playback_request_path_, remove_error);
+      if (remove_error) {
+        std::cerr << "[MotionGroup] Warning: failed to remove consumed playback request: "
+                  << remove_error.message() << std::endl;
+      }
       return true;
+    }
+
+    void PrimeExistingMotionPlaybackRequest() {
+      if (motion_playback_request_path_.empty()) { return; }
+      std::error_code ec;
+      if (!std::filesystem::exists(motion_playback_request_path_, ec) || ec) { return; }
+
+      try {
+        std::ifstream input(motion_playback_request_path_);
+        if (!input) { return; }
+        nlohmann::json request;
+        input >> request;
+        const std::string request_id = request.value("request_id", "");
+        if (!request_id.empty()) {
+          last_motion_playback_request_id_ = request_id;
+          std::cout << "[MotionGroup] Ignoring existing playback request from previous run: "
+                    << motion_playback_request_path_ << std::endl;
+        }
+      } catch (const std::exception& e) {
+        std::cerr << "[MotionGroup] Warning: could not inspect existing playback request: "
+                  << e.what() << std::endl;
+      }
     }
 
     bool AdvanceMotionGroupPlaybackLocked() {
@@ -2694,6 +2722,7 @@ class G1Deploy {
       motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
       motion_playback_request_path_ = std::filesystem::path(motion_data_path_) / ".motion_playback_request.json";
       sonic_status_file_path_ = std::filesystem::path(motion_data_path_) / ".sonic_status.json";
+      PrimeExistingMotionPlaybackRequest();
       last_motion_reload_check_ = std::chrono::steady_clock::now();
       std::error_code reload_flag_error;
       if (std::filesystem::exists(motion_reload_flag_path_, reload_flag_error) && !reload_flag_error) {
