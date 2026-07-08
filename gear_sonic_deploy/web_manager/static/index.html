@@ -366,6 +366,16 @@
     .group-title { display: grid; gap: 4px; min-width: 0; }
     .group-name { font-weight: 850; color: var(--ink); overflow-wrap: anywhere; }
     .group-meta { color: var(--muted); font-size: 12px; }
+    .group-playing {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 7px;
+      color: var(--success);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .group-playing-motion { overflow-wrap: anywhere; color: var(--ink); }
     .group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .group-drop { min-height: 56px; padding: 10px; display: grid; gap: 8px; }
     .group-item {
@@ -379,6 +389,13 @@
       background: #fbfcfb;
     }
     .group-item-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .group-item-status {
+      align-self: center;
+      color: var(--success);
+      font-size: 13px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
     .group-empty {
       min-height: 44px;
       display: grid;
@@ -627,7 +644,7 @@
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
         commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位', expandGuide: '展开', collapseGuide: '收起',
         aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名',
-        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中'
+        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中', currentPlaying: '正在播放', currentGroupMotion: '第 {index}/{total} 个'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -638,7 +655,7 @@
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
         commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons', expandGuide: 'Expand', collapseGuide: 'Collapse',
         aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias',
-        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing'
+        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing', currentPlaying: 'Now playing', currentGroupMotion: '{index}/{total}'
       }
     };
 
@@ -925,13 +942,28 @@
         return;
       }
       groupListEl.innerHTML = groups.map(group => {
-        const activeClass = active && active.group_id === group.id ? ' active' : '';
-        const activeBadge = active && active.group_id === group.id ? `<span class="badge ok">${t('activeGroup')}</span>` : '';
+        const isActiveGroup = active && active.group_id === group.id;
+        const hasActiveIndex = isActiveGroup && active.current_index !== undefined && active.current_index !== null &&
+          Number.isInteger(Number(active.current_index));
+        const activeIndex = hasActiveIndex
+          ? Number(active.current_index)
+          : -1;
+        const activeClass = isActiveGroup ? ' active' : '';
+        const activeBadge = isActiveGroup ? `<span class="badge ok">${t('activeGroup')}</span>` : '';
         const motions = group.motions || [];
+        const activeMotion = activeIndex >= 0 && activeIndex < motions.length ? motions[activeIndex] : null;
+        const activeMotionName = activeMotion ? activeMotion.name : (lastSonicStatus && lastSonicStatus.motion ? lastSonicStatus.motion.current : '');
+        const playingSummary = isActiveGroup && activeMotionName && activeIndex >= 0 ? `
+          <span class="group-playing">
+            <span>${t('currentPlaying')}</span>
+            <span>${t('currentGroupMotion', { index: activeIndex + 1, total: motions.length })}</span>
+            <span class="group-playing-motion">${motionNameHtml(activeMotionName)}</span>
+          </span>` : '';
         const items = motions.map((motion, index) => `
-          <div class="group-item" data-group-id="${escapeHtml(group.id)}" data-index="${index}">
+          <div class="group-item${isActiveGroup && index === activeIndex ? ' playing' : ''}" data-group-id="${escapeHtml(group.id)}" data-index="${index}">
             <span class="motion-name">${motionNameHtml(motion.name)}</span>
             <span class="group-item-actions">
+              ${isActiveGroup && index === activeIndex ? `<span class="group-item-status">${t('currentPlaying')}</span>` : ''}
               <button class="secondary mini-action" onclick="moveMotionInGroup('${escapeHtml(group.id)}', ${index}, 'top')" ${index === 0 ? 'disabled' : ''}>${t('pinToTop')}</button>
               <button class="secondary mini-action" onclick="moveMotionInGroup('${escapeHtml(group.id)}', ${index}, 'up')" ${index === 0 ? 'disabled' : ''}>${t('moveUp')}</button>
               <button class="secondary mini-action" onclick="moveMotionInGroup('${escapeHtml(group.id)}', ${index}, 'down')" ${index === motions.length - 1 ? 'disabled' : ''}>${t('moveDown')}</button>
@@ -944,6 +976,7 @@
               <div class="group-title">
                 <span class="group-name">${escapeHtml(group.name)} ${activeBadge}</span>
                 <span class="group-meta">${t('groupItems', { count: motions.length })}</span>
+                ${playingSummary}
               </div>
               <div class="group-actions">
                 <button class="mini-action" onclick="playMotionGroup('${escapeHtml(group.id)}')">${t('playGroup')}</button>
