@@ -10,7 +10,8 @@ import loadMujoco, {
 } from "@mujoco/mujoco";
 import mujocoWasmUrl from "@mujoco/mujoco/mujoco.wasm?url";
 import * as THREE from "three";
-import type { RuntimeStatus, SimConfigResponse, SimManifestResponse } from "./types";
+import type { RuntimeStatus, SimConfigResponse, SimManifestResponse, WbcPolicyManifest } from "./types";
+import { WbcPolicyController } from "./wbcController";
 
 interface SimAssetContent {
   path: string;
@@ -72,6 +73,10 @@ const DEFAULT_STATUS: RuntimeStatus = {
   simulationTime: 0,
   stepCount: 0,
   stepRate: 0,
+  wbcLoaded: false,
+  policyMode: "off",
+  command: [0, 0, 0],
+  policyInferenceMs: 0,
   lastError: null
 };
 
@@ -168,6 +173,7 @@ function getScalarValue(value: unknown, fallback = 0): number {
 export class WebMujocoRuntime {
   private config: SimConfigResponse | null = null;
   private manifestResponse: SimManifestResponse | null = null;
+  private wbcManifest: WbcPolicyManifest | null = null;
   private assetContents: SimAssetContent[] = [];
   private sceneXml = "";
   private canvas: HTMLCanvasElement | null = null;
@@ -186,6 +192,7 @@ export class WebMujocoRuntime {
   private visuals = new Map<number, ThreeVisual>();
   private meshGeometryCache = new Map<number, THREE.BufferGeometry>();
   private materialCache = new Map<string, THREE.MeshStandardMaterial>();
+  private wbcController: WbcPolicyController | null = null;
   private animationFrameId: number | null = null;
   private accumulatedSimulationSeconds = 0;
   private previousFrameTimestamp = 0;
@@ -222,22 +229,39 @@ export class WebMujocoRuntime {
   public setInputs(
     config: SimConfigResponse,
     manifestResponse: SimManifestResponse,
+    wbcManifest: WbcPolicyManifest,
     sceneXml: string,
     assetContents: SimAssetContent[]
   ): void {
     this.config = config;
     this.manifestResponse = manifestResponse;
+    this.wbcManifest = wbcManifest;
     this.sceneXml = sceneXml;
     this.assetContents = assetContents;
     this.meshGeometryCache.clear();
+  }
+
+  public setCommand(command: Partial<{ x: number; y: number; yaw: number }>): void {
+    this.wbcController?.setCommand(command);
+    this.syncWbcStatus();
+  }
+
+  public nudgeCommand(axis: "x" | "y" | "yaw", delta: number): void {
+    this.wbcController?.nudgeCommand(axis, delta);
+    this.syncWbcStatus();
+  }
+
+  public stopCommand(): void {
+    this.wbcController?.stopCommand();
+    this.syncWbcStatus();
   }
 
   public async load(): Promise<void> {
     if (!this.threeRenderer) {
       throw new Error("WebGL renderer is not available. MuJoCo robot rendering requires a browser with WebGL enabled.");
     }
-    if (!this.config || !this.manifestResponse || !this.sceneXml || this.assetContents.length === 0) {
-      throw new Error("Simulation config, manifest, scene XML, and binary assets must be loaded before runtime init.");
+    if (!this.config || !this.manifestResponse || !this.wbcManifest || !this.sceneXml || this.assetContents.length === 0) {
+      throw new Error("Simulation config, WBC manifest, scene XML, and binary assets must be loaded before runtime init.");
     }
 
     this.stopLoop();
@@ -246,7 +270,7 @@ export class WebMujocoRuntime {
     this.status = {
       ...DEFAULT_STATUS,
       phase: "loading",
-      message: "正在加载 @mujoco/mujoco，并写入 MJCF/mesh 到 WASM 文件系统...",
+      message: "正在加载 @mujoco/mujoco、WBC ONNX policy，并写入 MJCF/mesh 到 WASM 文件系统...",
       assetFileCount: this.manifestResponse.manifest.files.length,
       sceneBytes: new TextEncoder().encode(this.sceneXml).byteLength
     };
@@ -257,24 +281,27 @@ export class WebMujocoRuntime {
         locateFile: (path: string) => (path.endsWith(".wasm") ? mujocoWasmUrl : path)
       });
       this.mujocoModule = mujocoModule;
+      const wbcController = new WbcPolicyController(this.wbcManifest);
+      await wbcController.load();
 
       this.writeAssetsToVirtualFileSystem(mujocoModule);
 
       const modelPath = `/model/${this.manifestResponse.manifest.scene_path}`;
       const model = mujocoModule.MjModel.from_xml_path(modelPath);
-      this.disableModelGravity(model);
       const data = new mujocoModule.MjData(model);
+      wbcController.initializeModel(model, data);
       this.applyDefaultJointPose(model, data);
       mujocoModule.mj_forward(model, data);
 
       this.model = model;
       this.data = data;
+      this.wbcController = wbcController;
       this.createMujocoSceneObjects(mujocoModule, model);
       this.updateMujocoScene();
       this.status = {
         ...this.status,
         phase: "ready",
-        message: "MuJoCo 模型已加载。当前使用 Three.js 渲染 MuJoCo scene geoms，浏览器预览默认关闭重力。",
+        message: "MuJoCo 模型和 WBC/policy 已加载。Start 会在浏览器内运行 ONNX policy、PD WBC 和 mj_step。",
         moduleExportNames: listExportNames(mujocoModule),
         modelLoaded: true,
         bodyCount: getNumberProperty(model, "nbody"),
@@ -282,8 +309,10 @@ export class WebMujocoRuntime {
         qvelCount: getNumberProperty(model, "nv"),
         actuatorCount: getNumberProperty(model, "nu"),
         simulationTime: getNumberProperty(data, "time"),
+        wbcLoaded: true,
         lastError: null
       };
+      this.syncWbcStatus();
       this.renderCanvas();
     } catch (error) {
       this.status = {
@@ -304,7 +333,7 @@ export class WebMujocoRuntime {
     this.status = {
       ...this.status,
       phase: "running",
-      message: "MuJoCo WASM 仿真运行中。浏览器预览未接入 WBC，已关闭重力避免自由坍塌。"
+      message: "MuJoCo WASM + WBC/policy 运行中。速度命令为 0 时使用 Balance policy；前进/侧移/转向命令非 0 时切到 Walk policy。"
     };
     this.accumulatedSimulationSeconds = 0;
     this.previousFrameTimestamp = performance.now();
@@ -326,6 +355,8 @@ export class WebMujocoRuntime {
     this.stopLoop();
     if (this.mujocoModule && this.model && this.data) {
       this.mujocoModule.mj_resetData(this.model, this.data);
+      this.wbcController?.resetPolicyState();
+      this.wbcController?.applyDefaultPose(this.data);
       this.applyDefaultJointPose(this.model, this.data);
       this.mujocoModule.mj_forward(this.model, this.data);
       this.updateMujocoScene();
@@ -338,6 +369,7 @@ export class WebMujocoRuntime {
       stepCount: 0,
       stepRate: 0
     };
+    this.syncWbcStatus();
     this.accumulatedSimulationSeconds = 0;
     this.renderCanvas();
   }
@@ -346,24 +378,24 @@ export class WebMujocoRuntime {
     if (this.status.phase === "idle" || this.status.phase === "loading" || this.status.phase === "error") {
       return;
     }
-    this.advanceOneStep(1000 / 60);
+    void this.advanceOneStep(1000 / 60);
   }
 
-  private tick(timestamp: number): void {
+  private async tick(timestamp: number): Promise<void> {
     if (this.status.phase !== "running") {
       return;
     }
     const elapsedMilliseconds = Math.max(0, timestamp - this.previousFrameTimestamp);
     this.previousFrameTimestamp = timestamp;
-    this.advanceSimulation(elapsedMilliseconds);
+    await this.advanceSimulation(elapsedMilliseconds);
     this.animationFrameId = requestAnimationFrame((nextTimestamp) => this.tick(nextTimestamp));
   }
 
-  private advanceOneStep(elapsedMilliseconds: number): void {
-    this.advanceSimulation(elapsedMilliseconds, 1);
+  private async advanceOneStep(elapsedMilliseconds: number): Promise<void> {
+    await this.advanceSimulation(elapsedMilliseconds, 1);
   }
 
-  private advanceSimulation(elapsedMilliseconds: number, forcedStepCount?: number): void {
+  private async advanceSimulation(elapsedMilliseconds: number, forcedStepCount?: number): Promise<void> {
     if (!this.mujocoModule || !this.model || !this.data) {
       return;
     }
@@ -377,10 +409,13 @@ export class WebMujocoRuntime {
     }
 
     for (let stepIndex = 0; stepIndex < targetStepCount; stepIndex += 1) {
+      this.wbcController?.applyTorques(this.model, this.data);
       this.mujocoModule.mj_step(this.model, this.data);
+      await this.wbcController?.afterMujocoStep(this.data);
     }
 
     this.updateMujocoScene();
+    this.syncWbcStatus();
 
     const nextStepCount = this.status.stepCount + targetStepCount;
     this.status = {
@@ -566,13 +601,6 @@ export class WebMujocoRuntime {
     mujocoModule.mjv_defaultFreeCamera(model, this.mjvCamera);
   }
 
-  private disableModelGravity(model: MjModel): void {
-    const gravity = model.opt.gravity as ArrayLike<number> & { [index: number]: number };
-    gravity[0] = 0;
-    gravity[1] = 0;
-    gravity[2] = 0;
-  }
-
   private applyDefaultJointPose(model: MjModel, data: MjData): void {
     const qpos = getNumericArray(data, "qpos") as (ArrayLike<number> & { [index: number]: number }) | null;
     const qvel = getNumericArray(data, "qvel") as (ArrayLike<number> & { [index: number]: number }) | null;
@@ -591,6 +619,20 @@ export class WebMujocoRuntime {
         qvel[qvelAddress] = 0;
       }
     }
+  }
+
+  private syncWbcStatus(): void {
+    const wbcStatus = this.wbcController?.status;
+    if (!wbcStatus) {
+      return;
+    }
+    this.status = {
+      ...this.status,
+      wbcLoaded: wbcStatus.loaded,
+      policyMode: wbcStatus.policyMode,
+      command: wbcStatus.command,
+      policyInferenceMs: wbcStatus.policyInferenceMs
+    };
   }
 
   private updateMujocoScene(): void {

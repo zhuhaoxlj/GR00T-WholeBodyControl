@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@mujoco/mujoco": "latest",
+    "onnxruntime-web": "^1.27.0",
     "three": "^0.185.1"
   },
   "devDependencies": {

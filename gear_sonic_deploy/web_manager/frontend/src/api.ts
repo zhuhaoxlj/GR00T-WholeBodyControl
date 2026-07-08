@@ -1,4 +1,4 @@
-import type { SimConfigResponse, SimManifestResponse } from "./types";
+import type { SimConfigResponse, SimManifestResponse, WbcManifestResponse } from "./types";
 
 async function requestJson<ResponseType>(url: string): Promise<ResponseType> {
   const response = await fetch(url);
@@ -15,6 +15,10 @@ export async function loadSimConfig(): Promise<SimConfigResponse> {
 
 export async function loadSimAssetManifest(): Promise<SimManifestResponse> {
   return requestJson<SimManifestResponse>("/api/sim/assets/manifest");
+}
+
+export async function loadWbcManifest(): Promise<WbcManifestResponse> {
+  return requestJson<WbcManifestResponse>("/api/sim/wbc/manifest");
 }
 
 export async function loadTextAsset(url: string): Promise<string> {

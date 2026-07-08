@@ -1,4 +1,4 @@
-import { loadBinaryAsset, loadSimAssetManifest, loadSimConfig, loadTextAsset } from "./api";
+import { loadBinaryAsset, loadSimAssetManifest, loadSimConfig, loadTextAsset, loadWbcManifest } from "./api";
 import { WebMujocoRuntime } from "./mujocoRuntime";
 import "./styles.css";
 
@@ -16,8 +16,8 @@ appElement.innerHTML = `
         <p class="eyebrow">MuJoCo WASM Phase 2</p>
         <h1>Sonic Web Simulator</h1>
         <p class="subtitle">
-          这个页面现在会在浏览器中加载 G1 MJCF 和 mesh，创建 MuJoCo WASM model/data，
-          执行真实 mj_step，并用 WebGL 渲染 MuJoCo scene geoms。
+          这个页面会在浏览器中加载 G1 MJCF、mesh、MuJoCo WASM 和 GR00T WBC ONNX policy，
+          执行 policy inference、PD WBC、真实 mj_step，并用 WebGL 渲染 MuJoCo scene geoms。
         </p>
       </div>
       <a class="link-button" href="/">返回 Motion Manager</a>
@@ -33,6 +33,15 @@ appElement.innerHTML = `
           <button id="stepButton" class="secondary">Step</button>
           <button id="resetButton" class="ghost">Reset</button>
         </div>
+        <div class="command-bar">
+          <button id="walkBackwardButton" class="ghost">-X</button>
+          <button id="walkForwardButton" class="secondary">+X</button>
+          <button id="strafeLeftButton" class="ghost">+Y</button>
+          <button id="strafeRightButton" class="ghost">-Y</button>
+          <button id="turnLeftButton" class="ghost">+Yaw</button>
+          <button id="turnRightButton" class="ghost">-Yaw</button>
+          <button id="stopCommandButton" class="secondary">Stop Cmd</button>
+        </div>
       </article>
 
       <aside class="panel side-panel">
@@ -47,6 +56,10 @@ appElement.innerHTML = `
           <div><dt>Bodies</dt><dd id="bodyCountValue">0</dd></div>
           <div><dt>qpos/qvel</dt><dd id="stateSizeValue">0 / 0</dd></div>
           <div><dt>Actuators</dt><dd id="actuatorCountValue">0</dd></div>
+          <div><dt>WBC</dt><dd id="wbcValue">off</dd></div>
+          <div><dt>Policy</dt><dd id="policyValue">off</dd></div>
+          <div><dt>Cmd</dt><dd id="commandValue">0 / 0 / 0</dd></div>
+          <div><dt>ONNX</dt><dd id="inferenceValue">0.0ms</dd></div>
           <div><dt>Exports</dt><dd id="exportsValue">0</dd></div>
         </dl>
         <p id="runtimeMessage" class="message">等待加载。</p>
@@ -65,6 +78,10 @@ appElement.innerHTML = `
           <h3>Manifest</h3>
           <pre id="manifestDetails">未加载</pre>
         </div>
+        <div>
+          <h3>WBC Policy</h3>
+          <pre id="wbcDetails">未加载</pre>
+        </div>
       </div>
     </section>
   </main>
@@ -79,11 +96,16 @@ const assetFileCountValue = document.querySelector<HTMLDListElement>("#assetFile
 const bodyCountValue = document.querySelector<HTMLDListElement>("#bodyCountValue")!;
 const stateSizeValue = document.querySelector<HTMLDListElement>("#stateSizeValue")!;
 const actuatorCountValue = document.querySelector<HTMLDListElement>("#actuatorCountValue")!;
+const wbcValue = document.querySelector<HTMLDListElement>("#wbcValue")!;
+const policyValue = document.querySelector<HTMLDListElement>("#policyValue")!;
+const commandValue = document.querySelector<HTMLDListElement>("#commandValue")!;
+const inferenceValue = document.querySelector<HTMLDListElement>("#inferenceValue")!;
 const exportsValue = document.querySelector<HTMLDListElement>("#exportsValue")!;
 const runtimeMessage = document.querySelector<HTMLParagraphElement>("#runtimeMessage")!;
 const runtimeError = document.querySelector<HTMLPreElement>("#runtimeError")!;
 const sceneDetails = document.querySelector<HTMLPreElement>("#sceneDetails")!;
 const manifestDetails = document.querySelector<HTMLPreElement>("#manifestDetails")!;
+const wbcDetails = document.querySelector<HTMLPreElement>("#wbcDetails")!;
 const simCanvas = document.querySelector<HTMLCanvasElement>("#simCanvas")!;
 
 runtime.setCanvas(simCanvas);
@@ -99,6 +121,10 @@ function renderRuntimeStatus(): void {
   bodyCountValue.textContent = String(status.bodyCount);
   stateSizeValue.textContent = `${status.qposCount} / ${status.qvelCount}`;
   actuatorCountValue.textContent = String(status.actuatorCount);
+  wbcValue.textContent = status.wbcLoaded ? "loaded" : "off";
+  policyValue.textContent = status.policyMode;
+  commandValue.textContent = status.command.map((value) => value.toFixed(2)).join(" / ");
+  inferenceValue.textContent = `${status.policyInferenceMs.toFixed(1)}ms`;
   exportsValue.textContent = String(status.moduleExportNames.length);
   runtimeMessage.textContent = status.message;
   runtimeError.textContent = status.lastError ?? "";
@@ -106,7 +132,11 @@ function renderRuntimeStatus(): void {
 
 async function loadSimulationInputs(): Promise<void> {
   runtimeMessage.textContent = "正在加载 FastAPI 仿真配置和资产 manifest...";
-  const [config, manifestResponse] = await Promise.all([loadSimConfig(), loadSimAssetManifest()]);
+  const [config, manifestResponse, wbcManifestResponse] = await Promise.all([
+    loadSimConfig(),
+    loadSimAssetManifest(),
+    loadWbcManifest()
+  ]);
   const sceneXml = await loadTextAsset(config.scene_url);
   const assetContents = await Promise.all(
     manifestResponse.manifest.files.map(async (assetFile) => ({
@@ -114,7 +144,7 @@ async function loadSimulationInputs(): Promise<void> {
       data: await loadBinaryAsset(assetFile.url)
     }))
   );
-  runtime.setInputs(config, manifestResponse, sceneXml, assetContents);
+  runtime.setInputs(config, manifestResponse, wbcManifestResponse.manifest, sceneXml, assetContents);
   sceneDetails.textContent = JSON.stringify({
     scene_path: config.scene_path,
     scene_url: config.scene_url,
@@ -131,6 +161,15 @@ async function loadSimulationInputs(): Promise<void> {
       meshdir: reference.references.meshdir
     }))
   }, null, 2);
+  wbcDetails.textContent = JSON.stringify({
+    config_path: wbcManifestResponse.manifest.config.config_path,
+    resource_root: wbcManifestResponse.manifest.config.resource_root,
+    num_actions: wbcManifestResponse.manifest.config.num_actions,
+    num_obs: wbcManifestResponse.manifest.config.num_obs,
+    obs_history_len: wbcManifestResponse.manifest.config.obs_history_len,
+    control_decimation: wbcManifestResponse.manifest.config.control_decimation,
+    policies: wbcManifestResponse.manifest.policies
+  }, null, 2);
   await runtime.load();
   renderRuntimeStatus();
 }
@@ -144,6 +183,13 @@ document.querySelector<HTMLButtonElement>("#startButton")!.addEventListener("cli
 document.querySelector<HTMLButtonElement>("#pauseButton")!.addEventListener("click", () => runtime.pause());
 document.querySelector<HTMLButtonElement>("#stepButton")!.addEventListener("click", () => runtime.stepOnce());
 document.querySelector<HTMLButtonElement>("#resetButton")!.addEventListener("click", () => runtime.reset());
+document.querySelector<HTMLButtonElement>("#walkForwardButton")!.addEventListener("click", () => runtime.nudgeCommand("x", 0.1));
+document.querySelector<HTMLButtonElement>("#walkBackwardButton")!.addEventListener("click", () => runtime.nudgeCommand("x", -0.1));
+document.querySelector<HTMLButtonElement>("#strafeLeftButton")!.addEventListener("click", () => runtime.nudgeCommand("y", 0.1));
+document.querySelector<HTMLButtonElement>("#strafeRightButton")!.addEventListener("click", () => runtime.nudgeCommand("y", -0.1));
+document.querySelector<HTMLButtonElement>("#turnLeftButton")!.addEventListener("click", () => runtime.nudgeCommand("yaw", 0.1));
+document.querySelector<HTMLButtonElement>("#turnRightButton")!.addEventListener("click", () => runtime.nudgeCommand("yaw", -0.1));
+document.querySelector<HTMLButtonElement>("#stopCommandButton")!.addEventListener("click", () => runtime.stopCommand());
 
 setInterval(renderRuntimeStatus, 100);
 renderRuntimeStatus();

@@ -44,6 +44,48 @@ export interface SimManifestResponse {
   manifest: SimAssetManifest;
 }
 
+export interface WbcPolicyAsset {
+  path: string;
+  url: string;
+  size_bytes: number;
+}
+
+export interface WbcPolicyConfig {
+  config_path: string;
+  resource_root: string;
+  simulation_dt: number;
+  control_decimation: number;
+  num_actions: number;
+  num_obs: number;
+  obs_history_len: number;
+  kps: number[];
+  kds: number[];
+  default_angles: number[];
+  action_scale: number;
+  ang_vel_scale: number;
+  dof_pos_scale: number;
+  dof_vel_scale: number;
+  cmd_scale: number[];
+  cmd_init: number[];
+  height_cmd: number;
+  rpy_cmd: number[];
+  freq_cmd: number;
+  joint_names: string[];
+}
+
+export interface WbcPolicyManifest {
+  config: WbcPolicyConfig;
+  policies: {
+    balance: WbcPolicyAsset;
+    walk: WbcPolicyAsset;
+  };
+}
+
+export interface WbcManifestResponse {
+  ok: boolean;
+  manifest: WbcPolicyManifest;
+}
+
 export interface RuntimeStatus {
   phase: "idle" | "loading" | "ready" | "running" | "paused" | "error";
   message: string;
@@ -58,5 +100,9 @@ export interface RuntimeStatus {
   simulationTime: number;
   stepCount: number;
   stepRate: number;
+  wbcLoaded: boolean;
+  policyMode: "off" | "balance" | "walk";
+  command: [number, number, number];
+  policyInferenceMs: number;
   lastError: string | null;
 }

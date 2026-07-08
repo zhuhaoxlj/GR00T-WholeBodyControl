@@ -182,6 +182,20 @@ h3 {
   background: rgba(15, 23, 42, 0.72);
 }
 
+.command-bar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(78px, 1fr));
+  gap: 10px;
+  padding: 0 16px 16px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.command-bar button {
+  min-width: 0;
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
 .side-panel,
 .diagnostics-panel {
   padding: 20px;
@@ -250,7 +264,7 @@ pre {
 
 .diagnostics-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -269,6 +283,10 @@ pre {
   .layout,
   .diagnostics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .command-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .link-button {

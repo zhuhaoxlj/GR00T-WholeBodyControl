@@ -39,12 +39,20 @@ SIM_MODEL_ROOT = Path(
 SIM_SCENE_RELATIVE_PATH = os.environ.get("SONIC_SIM_SCENE", "scene_43dof.xml")
 SIM_WBC_CONFIG_PATH = (
     REPO_ROOT
-    / "gear_sonic"
-    / "utils"
-    / "mujoco_sim"
-    / "wbc_configs"
-    / "g1_29dof_sonic_model12.yaml"
+    / "decoupled_wbc"
+    / "sim2mujoco"
+    / "resources"
+    / "robots"
+    / "g1"
+    / "g1_gear_wbc.yaml"
 ).resolve()
+SIM_WBC_RESOURCE_ROOT = (
+    REPO_ROOT / "decoupled_wbc" / "sim2mujoco" / "resources" / "robots" / "g1"
+).resolve()
+SIM_WBC_POLICY_FILES = {
+    "balance": "policy/GR00T-WholeBodyControl-Balance.onnx",
+    "walk": "policy/GR00T-WholeBodyControl-Walk.onnx",
+}
 FRONTEND_DIST_DIR = APP_DIR / "frontend" / "dist"
 FRONTEND_DIST_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 
@@ -438,12 +446,27 @@ def assert_under_sim_model_root(path: Path) -> Path:
     return resolved
 
 
+def assert_under_wbc_resource_root(path: Path) -> Path:
+    resolved = path.resolve()
+    if resolved != SIM_WBC_RESOURCE_ROOT and SIM_WBC_RESOURCE_ROOT not in resolved.parents:
+        raise HTTPException(status_code=400, detail="Path escapes WBC resource root")
+    return resolved
+
+
 def sim_asset_url(relative_path: str) -> str:
     return "/api/sim/assets/" + relative_path.replace("\\", "/")
 
 
+def wbc_asset_url(relative_path: str) -> str:
+    return "/api/sim/wbc/assets/" + relative_path.replace("\\", "/")
+
+
 def relative_to_sim_model_root(path: Path) -> str:
     return path.resolve().relative_to(SIM_MODEL_ROOT).as_posix()
+
+
+def relative_to_wbc_resource_root(path: Path) -> str:
+    return path.resolve().relative_to(SIM_WBC_RESOURCE_ROOT).as_posix()
 
 
 def iter_sim_asset_files() -> Iterable[Path]:
@@ -503,6 +526,94 @@ def build_sim_asset_manifest() -> dict[str, Any]:
         "scene_references": scene_references,
         "include_references": include_references,
         "files": files,
+    }
+
+
+def load_wbc_policy_config() -> dict[str, Any]:
+    try:
+        import yaml  # type: ignore
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PyYAML is required for WBC config loading") from exc
+
+    if not SIM_WBC_CONFIG_PATH.exists():
+        raise HTTPException(status_code=404, detail="WBC config not found")
+    raw_config = yaml.safe_load(SIM_WBC_CONFIG_PATH.read_text())
+    if not isinstance(raw_config, dict):
+        raise HTTPException(status_code=500, detail="WBC config is invalid")
+
+    def float_list(key: str) -> list[float]:
+        value = raw_config.get(key)
+        if not isinstance(value, list):
+            raise HTTPException(status_code=500, detail=f"WBC config missing list: {key}")
+        return [float(item) for item in value]
+
+    def float_value(key: str) -> float:
+        value = raw_config.get(key)
+        if not isinstance(value, (int, float)):
+            raise HTTPException(status_code=500, detail=f"WBC config missing number: {key}")
+        return float(value)
+
+    def int_value(key: str) -> int:
+        value = raw_config.get(key)
+        if not isinstance(value, int):
+            raise HTTPException(status_code=500, detail=f"WBC config missing integer: {key}")
+        return value
+
+    joint_names = [
+        "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint",
+        "left_knee_joint", "left_ankle_pitch_joint", "left_ankle_roll_joint",
+        "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
+        "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
+        "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
+        "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
+        "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint",
+        "left_wrist_yaw_joint", "right_shoulder_pitch_joint", "right_shoulder_roll_joint",
+        "right_shoulder_yaw_joint", "right_elbow_joint", "right_wrist_roll_joint",
+        "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+    ]
+    default_angles = float_list("default_angles")
+    arm_default_angles = [0.0] * (len(joint_names) - len(default_angles))
+    arm_kps = [100.0] * len(arm_default_angles)
+    arm_kds = [0.5] * len(arm_default_angles)
+
+    return {
+        "config_path": str(SIM_WBC_CONFIG_PATH),
+        "resource_root": str(SIM_WBC_RESOURCE_ROOT),
+        "simulation_dt": float_value("simulation_dt"),
+        "control_decimation": int_value("control_decimation"),
+        "num_actions": int_value("num_actions"),
+        "num_obs": int_value("num_obs"),
+        "obs_history_len": int_value("obs_history_len"),
+        "kps": float_list("kps") + arm_kps,
+        "kds": float_list("kds") + arm_kds,
+        "default_angles": default_angles + arm_default_angles,
+        "action_scale": float_value("action_scale"),
+        "ang_vel_scale": float_value("ang_vel_scale"),
+        "dof_pos_scale": float_value("dof_pos_scale"),
+        "dof_vel_scale": float_value("dof_vel_scale"),
+        "cmd_scale": float_list("cmd_scale"),
+        "cmd_init": float_list("cmd_init"),
+        "height_cmd": float_value("height_cmd"),
+        "rpy_cmd": float_list("rpy_cmd"),
+        "freq_cmd": float_value("freq_cmd"),
+        "joint_names": joint_names,
+    }
+
+
+def build_wbc_policy_manifest() -> dict[str, Any]:
+    policies = {}
+    for policy_name, relative_path in SIM_WBC_POLICY_FILES.items():
+        policy_path = assert_under_wbc_resource_root(SIM_WBC_RESOURCE_ROOT / relative_path)
+        if not policy_path.exists() or not policy_path.is_file():
+            raise HTTPException(status_code=404, detail=f"WBC policy not found: {policy_name}")
+        policies[policy_name] = {
+            "path": relative_to_wbc_resource_root(policy_path),
+            "url": wbc_asset_url(relative_to_wbc_resource_root(policy_path)),
+            "size_bytes": policy_path.stat().st_size,
+        }
+    return {
+        "config": load_wbc_policy_config(),
+        "policies": policies,
     }
 
 
@@ -699,8 +810,8 @@ def sim_config() -> dict:
         "wbc_config_path": manifest["wbc_config_path"],
         "default_timestep": 0.005,
         "notes": [
-            "The first browser milestone is a MuJoCo WASM loading and stepping smoke test.",
-            "Unitree DDS and policy inference remain intentionally decoupled from this endpoint.",
+            "The browser simulator loads MuJoCo WASM and runs the G1 model directly in the page.",
+            "WBC policy assets are exposed via /api/sim/wbc/manifest for in-browser ONNX inference.",
         ],
     }
 
@@ -708,6 +819,22 @@ def sim_config() -> dict:
 @app.get("/api/sim/assets/manifest")
 def sim_assets_manifest() -> dict:
     return {"ok": True, "manifest": build_sim_asset_manifest()}
+
+
+@app.get("/api/sim/wbc/manifest")
+def sim_wbc_manifest() -> dict:
+    return {"ok": True, "manifest": build_wbc_policy_manifest()}
+
+
+@app.get("/api/sim/wbc/assets/{asset_path:path}")
+def sim_wbc_asset(asset_path: str) -> FileResponse:
+    safe_asset_path = asset_path.strip().lstrip("/\\")
+    if not safe_asset_path:
+        raise HTTPException(status_code=400, detail="WBC asset path is required")
+    resolved_asset_path = assert_under_wbc_resource_root(SIM_WBC_RESOURCE_ROOT / safe_asset_path)
+    if not resolved_asset_path.exists() or not resolved_asset_path.is_file():
+        raise HTTPException(status_code=404, detail="WBC asset not found")
+    return FileResponse(resolved_asset_path)
 
 
 @app.get("/api/sim/assets/{asset_path:path}")
