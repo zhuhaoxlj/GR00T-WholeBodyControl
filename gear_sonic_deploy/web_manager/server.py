@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
+REPO_ROOT = PROJECT_ROOT.parent
 DEFAULT_MOTION_DIR = PROJECT_ROOT / "reference" / "example"
 MOTION_DIR = Path(os.environ.get("SONIC_MOTION_DIR", DEFAULT_MOTION_DIR)).resolve()
 SONIC_STATUS_FILE = Path(
@@ -29,6 +30,23 @@ SONIC_STATUS_FILE = Path(
 SONIC_ZMQ_URL = os.environ.get("SONIC_ZMQ_URL", "tcp://127.0.0.1:5557")
 SONIC_ZMQ_TOPIC = os.environ.get("SONIC_ZMQ_TOPIC", "g1_debug")
 SONIC_STATUS_STALE_SECONDS = float(os.environ.get("SONIC_STATUS_STALE_SECONDS", "3.0"))
+SIM_MODEL_ROOT = Path(
+    os.environ.get(
+        "SONIC_SIM_MODEL_ROOT",
+        REPO_ROOT / "gear_sonic" / "data" / "robot_model" / "model_data" / "g1",
+    )
+).resolve()
+SIM_SCENE_RELATIVE_PATH = os.environ.get("SONIC_SIM_SCENE", "scene_43dof.xml")
+SIM_WBC_CONFIG_PATH = (
+    REPO_ROOT
+    / "gear_sonic"
+    / "utils"
+    / "mujoco_sim"
+    / "wbc_configs"
+    / "g1_29dof_sonic_model12.yaml"
+).resolve()
+FRONTEND_DIST_DIR = APP_DIR / "frontend" / "dist"
+FRONTEND_DIST_ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
 
 REQUIRED_FILES = {
     "joint_pos.csv",
@@ -106,6 +124,12 @@ app = FastAPI(title="Sonic Motion Web Manager")
 static_dir = APP_DIR / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+if FRONTEND_DIST_ASSETS_DIR.exists():
+    app.mount(
+        "/sim/assets",
+        StaticFiles(directory=FRONTEND_DIST_ASSETS_DIR),
+        name="sim-assets",
+    )
 
 
 def ensure_motion_dir() -> None:
@@ -407,6 +431,81 @@ def directory_size(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 
+def assert_under_sim_model_root(path: Path) -> Path:
+    resolved = path.resolve()
+    if resolved != SIM_MODEL_ROOT and SIM_MODEL_ROOT not in resolved.parents:
+        raise HTTPException(status_code=400, detail="Path escapes simulation model root")
+    return resolved
+
+
+def sim_asset_url(relative_path: str) -> str:
+    return "/api/sim/assets/" + relative_path.replace("\\", "/")
+
+
+def relative_to_sim_model_root(path: Path) -> str:
+    return path.resolve().relative_to(SIM_MODEL_ROOT).as_posix()
+
+
+def iter_sim_asset_files() -> Iterable[Path]:
+    if not SIM_MODEL_ROOT.exists():
+        return []
+    return (
+        path
+        for path in sorted(SIM_MODEL_ROOT.rglob("*"), key=lambda candidate: candidate.as_posix())
+        if path.is_file() and not path.is_symlink()
+    )
+
+
+def read_xml_asset_references(xml_path: Path) -> dict[str, Any]:
+    try:
+        xml_text = xml_path.read_text(errors="replace")
+    except OSError:
+        return {"includes": [], "meshes": [], "textures": [], "meshdir": None}
+
+    include_files = sorted(set(re.findall(r"<include\s+[^>]*file=[\"']([^\"']+)[\"']", xml_text)))
+    mesh_files = sorted(set(re.findall(r"<mesh\s+[^>]*file=[\"']([^\"']+)[\"']", xml_text)))
+    texture_files = sorted(set(re.findall(r"<texture\s+[^>]*file=[\"']([^\"']+)[\"']", xml_text)))
+    meshdir_match = re.search(r"<compiler\s+[^>]*meshdir=[\"']([^\"']+)[\"']", xml_text)
+    return {
+        "includes": include_files,
+        "meshes": mesh_files,
+        "textures": texture_files,
+        "meshdir": meshdir_match.group(1) if meshdir_match else None,
+    }
+
+
+def build_sim_asset_manifest() -> dict[str, Any]:
+    scene_path = assert_under_sim_model_root(SIM_MODEL_ROOT / SIM_SCENE_RELATIVE_PATH)
+    files = []
+    for file_path in iter_sim_asset_files():
+        relative_path = relative_to_sim_model_root(file_path)
+        files.append({
+            "path": relative_path,
+            "url": sim_asset_url(relative_path),
+            "size_bytes": file_path.stat().st_size,
+        })
+
+    scene_references = read_xml_asset_references(scene_path)
+    include_references = []
+    for include_file in scene_references["includes"]:
+        include_path = assert_under_sim_model_root(scene_path.parent / include_file)
+        include_references.append({
+            "path": relative_to_sim_model_root(include_path),
+            "url": sim_asset_url(relative_to_sim_model_root(include_path)),
+            "references": read_xml_asset_references(include_path),
+        })
+
+    return {
+        "model_root": str(SIM_MODEL_ROOT),
+        "scene_path": relative_to_sim_model_root(scene_path),
+        "scene_url": sim_asset_url(relative_to_sim_model_root(scene_path)),
+        "wbc_config_path": str(SIM_WBC_CONFIG_PATH),
+        "scene_references": scene_references,
+        "include_references": include_references,
+        "files": files,
+    }
+
+
 def find_motion_root(path: Path) -> Path:
     if REQUIRED_FILES <= {p.name for p in path.iterdir() if p.is_file()}:
         return path
@@ -567,9 +666,59 @@ def index() -> FileResponse:
     return FileResponse(APP_DIR / "static" / "index.html")
 
 
+@app.get("/sim")
+@app.get("/sim/")
+def sim_index() -> FileResponse:
+    sim_index_path = FRONTEND_DIST_DIR / "index.html"
+    if not sim_index_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Web MuJoCo frontend has not been built yet. Run `npm install` "
+                "and `npm run build` in web_manager/frontend, or use the Vite dev server."
+            ),
+        )
+    return FileResponse(sim_index_path)
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "motion_dir": str(MOTION_DIR)}
+
+
+@app.get("/api/sim/config")
+def sim_config() -> dict:
+    manifest = build_sim_asset_manifest()
+    return {
+        "ok": True,
+        "simulator": "mujoco-wasm",
+        "model_root": manifest["model_root"],
+        "scene_path": manifest["scene_path"],
+        "scene_url": manifest["scene_url"],
+        "manifest_url": "/api/sim/assets/manifest",
+        "wbc_config_path": manifest["wbc_config_path"],
+        "default_timestep": 0.005,
+        "notes": [
+            "The first browser milestone is a MuJoCo WASM loading and stepping smoke test.",
+            "Unitree DDS and policy inference remain intentionally decoupled from this endpoint.",
+        ],
+    }
+
+
+@app.get("/api/sim/assets/manifest")
+def sim_assets_manifest() -> dict:
+    return {"ok": True, "manifest": build_sim_asset_manifest()}
+
+
+@app.get("/api/sim/assets/{asset_path:path}")
+def sim_asset(asset_path: str) -> FileResponse:
+    safe_asset_path = asset_path.strip().lstrip("/\\")
+    if not safe_asset_path:
+        raise HTTPException(status_code=400, detail="Simulation asset path is required")
+    resolved_asset_path = assert_under_sim_model_root(SIM_MODEL_ROOT / safe_asset_path)
+    if not resolved_asset_path.exists() or not resolved_asset_path.is_file():
+        raise HTTPException(status_code=404, detail="Simulation asset not found")
+    return FileResponse(resolved_asset_path)
 
 
 @app.get("/api/sonic/status")

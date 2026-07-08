@@ -15,6 +15,45 @@ Open:
 http://127.0.0.1:8080
 ```
 
+## MuJoCo Web simulator smoke test
+
+The browser-side MuJoCo migration starts as a separate Vite + TypeScript app in
+`web_manager/frontend`. The FastAPI server exposes the G1 MJCF and mesh assets
+through `/api/sim/*`, while the Vite app loads `@mujoco/mujoco`, creates a real
+MuJoCo `MjModel`/`MjData`, runs `mj_step`, and renders MuJoCo scene geoms with
+Three.js on a WebGL canvas.
+
+Install and build the frontend:
+
+```bash
+cd /home/mark/Documents/Dance/GR00T-WholeBodyControl/gear_sonic_deploy/web_manager/frontend
+npm install
+npm run build
+```
+
+Then start the FastAPI server from `gear_sonic_deploy`:
+
+```bash
+uv run --project web_manager uvicorn web_manager.server:app \
+  --host 127.0.0.1 \
+  --port 8080
+```
+
+Open the built simulator page:
+
+```text
+http://127.0.0.1:8080/sim
+```
+
+For frontend development, run Vite in another terminal:
+
+```bash
+cd /home/mark/Documents/Dance/GR00T-WholeBodyControl/gear_sonic_deploy/web_manager/frontend
+npm run dev
+```
+
+The Vite dev server proxies `/api` to `http://127.0.0.1:8080`.
+
 By default the manager uses:
 
 ```text
