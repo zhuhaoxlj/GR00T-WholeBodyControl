@@ -12,42 +12,59 @@ if (!appElement) {
 appElement.innerHTML = `
   <main class="shell">
     <section class="hero">
-      <div>
-        <p class="eyebrow">MuJoCo WASM Phase 2</p>
+      <div class="hero-copy">
+        <p class="eyebrow">MuJoCo WASM / WBC LAB</p>
         <h1>Sonic Web Simulator</h1>
         <p class="subtitle">
-          这个页面会在浏览器中加载 G1 MJCF、mesh、MuJoCo WASM 和 GR00T WBC ONNX policy，
-          执行 policy inference、PD WBC、真实 mj_step，并用 WebGL 渲染 MuJoCo scene geoms。
+          Browser-side G1 scene, mesh assets, MuJoCo stepping, GR00T WBC ONNX inference, and WebGL scene rendering.
         </p>
       </div>
-      <a class="link-button" href="/">返回 Motion Manager</a>
+      <div class="hero-actions">
+        <a class="link-button ghost" href="/">Motion Manager</a>
+        <button id="loadButton" class="load-action">Load Runtime</button>
+      </div>
     </section>
 
     <section class="layout">
       <article class="panel simulator-panel">
-        <canvas class="sim-canvas" id="simCanvas" width="1280" height="720"></canvas>
-        <div class="controls">
-          <button id="loadButton">Load</button>
-          <button id="startButton" class="secondary">Start</button>
-          <button id="pauseButton" class="secondary">Pause</button>
-          <button id="stepButton" class="secondary">Step</button>
-          <button id="resetButton" class="ghost">Reset</button>
+        <div class="canvas-header">
+          <div>
+            <p class="panel-kicker">Scene View</p>
+            <h2>G1 Control Surface</h2>
+          </div>
+          <div class="phase-pill">
+            <span>Phase</span>
+            <strong id="phaseValue">idle</strong>
+          </div>
         </div>
-        <div class="command-bar">
-          <button id="walkBackwardButton" class="ghost">-X</button>
-          <button id="walkForwardButton" class="secondary">+X</button>
-          <button id="strafeLeftButton" class="ghost">+Y</button>
-          <button id="strafeRightButton" class="ghost">-Y</button>
-          <button id="turnLeftButton" class="ghost">+Yaw</button>
-          <button id="turnRightButton" class="ghost">-Yaw</button>
-          <button id="stopCommandButton" class="secondary">Stop Cmd</button>
+        <canvas class="sim-canvas" id="simCanvas" width="1280" height="720"></canvas>
+        <div class="control-deck">
+          <div class="control-group">
+            <span class="control-label">Playback</span>
+            <button id="startButton" class="secondary">Start</button>
+            <button id="pauseButton" class="secondary">Pause</button>
+            <button id="stepButton" class="secondary">Step</button>
+            <button id="resetButton" class="ghost">Reset</button>
+          </div>
+          <div class="control-group command-bar">
+            <span class="control-label">Command</span>
+            <button id="walkBackwardButton" class="ghost">-X</button>
+            <button id="walkForwardButton" class="secondary">+X</button>
+            <button id="strafeLeftButton" class="ghost">+Y</button>
+            <button id="strafeRightButton" class="ghost">-Y</button>
+            <button id="turnLeftButton" class="ghost">+Yaw</button>
+            <button id="turnRightButton" class="ghost">-Yaw</button>
+            <button id="stopCommandButton" class="secondary">Stop Cmd</button>
+          </div>
         </div>
       </article>
 
       <aside class="panel side-panel">
-        <h2>Runtime</h2>
+        <div class="panel-heading">
+          <p class="panel-kicker">Runtime</p>
+          <h2>Telemetry</h2>
+        </div>
         <dl class="metric-grid">
-          <div><dt>Phase</dt><dd id="phaseValue">idle</dd></div>
           <div><dt>Sim Time</dt><dd id="simTimeValue">0.000s</dd></div>
           <div><dt>Steps</dt><dd id="stepCountValue">0</dd></div>
           <div><dt>Step Rate</dt><dd id="stepRateValue">0.0Hz</dd></div>
@@ -68,7 +85,10 @@ appElement.innerHTML = `
     </section>
 
     <section class="panel diagnostics-panel">
-      <h2>Asset Diagnostics</h2>
+      <div class="panel-heading">
+        <p class="panel-kicker">Asset Diagnostics</p>
+        <h2>Loaded Manifests</h2>
+      </div>
       <div class="diagnostics-grid">
         <div>
           <h3>Scene</h3>
