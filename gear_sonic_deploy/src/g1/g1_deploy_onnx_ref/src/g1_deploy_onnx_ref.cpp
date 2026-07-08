@@ -2608,6 +2608,7 @@ class G1Deploy {
         current_motion_ = next_motion;
         current_frame_ = 0;
         saved_frame_for_observation_window_ = 0;
+        reinitialize_heading_ = true;
         operator_state.play = true;
         std::cout << "[MotionGroup] Continuing with motion "
                   << (playback_group_position_ + 1) << "/"
