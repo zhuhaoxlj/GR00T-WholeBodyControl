@@ -75,8 +75,10 @@ python gear_sonic_deploy/visualize_motion.py \
 cd gear_sonic_deploy
 uv run --project web_manager uvicorn web_manager.server:app \
   --host 127.0.0.1 \
-  --port 8080
+  --port 8888
 ```
+
+
 
 ## 真机
 
@@ -100,6 +102,8 @@ yes | bash ~/GR00T-WholeBodyControl/gear_sonic_deploy/deploy.sh real --input-typ
 ```bash
 ros2 topic pub --once /WBCPolicy/select_motion std_msgs/msg/String "{data: 'squat'}"
 ```
+
+
 
 # 转换青瞳舞蹈数据
 
@@ -129,6 +133,8 @@ python gear_sonic_deploy/visualize_motion.py \
 --fps 50
 ```
 
+
+
 # 机器人状态管理
 
 开机自启动，sonic启动 Init Done 之后机器人状态为 WAIT_FOR_CONTROL，此时电机使能 + 默认站姿 PD hold + 等待 Start 命令
@@ -147,6 +153,8 @@ tmux kill-session -t sonic 2>/dev/null || true
 sudo systemctl start groot-deploy.service
 ```
 
+
+
 # 本地开发完同步到机器人
 
 ```bash
@@ -154,6 +162,8 @@ GIT_LFS_SKIP_PUSH=1 \
   GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" \
   git push robot dance
 ```
+
+
 
 # 机器人上面执行
 

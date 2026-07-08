@@ -170,6 +170,25 @@
     }
     .modal-input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.14); }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+    .group-picker-list { display: grid; gap: 9px; max-height: min(56vh, 420px); overflow: auto; }
+    .group-picker-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+      min-height: 54px;
+      padding: 10px 12px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.62);
+      color: var(--text);
+      text-align: left;
+      box-shadow: none;
+    }
+    .group-picker-item:hover { border-color: rgba(147, 197, 253, 0.42); background: rgba(30, 41, 59, 0.78); box-shadow: none; }
+    .group-picker-name { overflow-wrap: anywhere; font-weight: 850; color: #dbeafe; }
+    .group-picker-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
     .hint-list { margin: 18px 0 0; padding-left: 18px; color: var(--muted); line-height: 1.7; font-size: 14px; }
 
     .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
@@ -419,6 +438,21 @@
     </div>
   </div>
 
+  <div id="groupPickerModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="groupPickerTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="groupPickerTitle" class="modal-title" data-i18n="groupPickerTitle">选择动作组</h2>
+        <p id="groupPickerCopy" class="modal-copy"></p>
+      </div>
+      <div class="modal-body">
+        <div id="groupPickerList" class="group-picker-list"></div>
+        <div class="modal-actions">
+          <button id="groupPickerCancelBtn" class="secondary" type="button" data-i18n="cancel">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const translations = {
       zh: {
@@ -430,7 +464,7 @@
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
         commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位',
         aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名',
-        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中'
+        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -441,7 +475,7 @@
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
         commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons',
         aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias',
-        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing'
+        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing'
       }
     };
 
@@ -451,6 +485,7 @@
     let lastMotionGroups = null;
     let motionAliases = {};
     let pendingAliasResolve = null;
+    let pendingGroupMotionName = null;
     let controlScheme = localStorage.getItem('sonic-control-scheme') || 'keyboard';
     let draggedMotionName = null;
     const statusEl = document.getElementById('status');
@@ -465,6 +500,10 @@
     const aliasInput = document.getElementById('aliasInput');
     const aliasCancelBtn = document.getElementById('aliasCancelBtn');
     const aliasConfirmBtn = document.getElementById('aliasConfirmBtn');
+    const groupPickerModal = document.getElementById('groupPickerModal');
+    const groupPickerCopy = document.getElementById('groupPickerCopy');
+    const groupPickerList = document.getElementById('groupPickerList');
+    const groupPickerCancelBtn = document.getElementById('groupPickerCancelBtn');
     const languageSelect = document.getElementById('languageSelect');
     const selectAll = document.getElementById('selectAll');
 
@@ -485,6 +524,7 @@
       if (lastMotionData) renderMotions(lastMotionData);
       if (lastSonicStatus) renderSonicStatus(lastSonicStatus);
       if (lastMotionGroups) renderMotionGroups(lastMotionGroups);
+      if (groupPickerModal.classList.contains('open') && pendingGroupMotionName) renderGroupPicker(pendingGroupMotionName);
       renderControlGuide();
     }
 
@@ -657,9 +697,10 @@
         const aliasAction = motion.alias_editable
           ? `<button class="secondary mini-action" onclick="editMotionAlias('${escapeHtml(motion.name)}')">${t('editAlias')}</button>`
           : `<span class="locked-copy">${t('presetLocked')}</span>`;
+        const groupAction = `<button class="secondary mini-action add-to-group-action" type="button" data-motion-name="${escapeHtml(motion.name)}">${t('addToGroup')}</button>`;
         tr.innerHTML = `
           <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
-          <td><span class="motion-name">${motionNameHtml(motion.name)}<span class="motion-name-actions">${aliasAction}</span></span></td>
+          <td><span class="motion-name">${motionNameHtml(motion.name)}<span class="motion-name-actions">${aliasAction}${groupAction}</span></span></td>
           <td>${badge}${errors}</td>
           <td>${motion.timesteps ?? ''}</td>
           <td>${sizeText(motion.size_bytes)}</td>
@@ -684,6 +725,10 @@
 
     function groupMotionNames(group) {
       return (group.motion_names || []).slice();
+    }
+
+    function groupMotionCount(group) {
+      return (group.motions || group.motion_names || []).length;
     }
 
     function activePlaybackGroup() {
@@ -761,6 +806,51 @@
         names.push(draggedMotionName);
         await saveMotionGroup(groupId, { motion_names: names });
       }
+    }
+
+    function renderGroupPicker(motionName) {
+      const groups = (lastMotionGroups && lastMotionGroups.groups) || [];
+      groupPickerCopy.textContent = t('groupPickerCopy', { name: motionLabel(motionName) || motionName });
+      if (!groups.length) {
+        groupPickerList.innerHTML = `<div class="empty">${t('noGroupsToAdd')}</div>`;
+        return;
+      }
+      groupPickerList.innerHTML = groups.map(group => `
+        <button class="group-picker-item" type="button" data-group-id="${escapeHtml(group.id)}">
+          <span class="group-picker-name">${escapeHtml(group.name)}</span>
+          <span class="group-picker-meta">${t('groupItems', { count: groupMotionCount(group) })} · ${t('chooseGroup')}</span>
+        </button>`).join('');
+    }
+
+    async function openGroupPicker(motionName) {
+      pendingGroupMotionName = motionName;
+      if (!lastMotionGroups) await loadMotionGroups();
+      renderGroupPicker(motionName);
+      groupPickerModal.classList.add('open');
+    }
+
+    function closeGroupPicker() {
+      groupPickerModal.classList.remove('open');
+      pendingGroupMotionName = null;
+      groupPickerList.innerHTML = '';
+    }
+
+    async function addMotionToGroup(groupId, motionName) {
+      const group = findGroup(groupId);
+      if (!group || !motionName) return;
+      const names = groupMotionNames(group);
+      names.push(motionName);
+      try {
+        const data = await api('/api/motion-groups/' + encodeURIComponent(groupId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ motion_names: names }),
+        });
+        const motionDisplay = motionLabel(motionName) || motionName;
+        setGroupStatus(t('addedToGroup', { motion: motionDisplay, group: data.group.name }));
+        closeGroupPicker();
+        await loadMotionGroups();
+      } catch (err) { setGroupStatus(t('groupUpdateFailed') + err.message); }
     }
 
     async function loadMotionGroups() {
@@ -967,6 +1057,21 @@
     aliasInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') confirmAlias();
       if (event.key === 'Escape') closeAliasModal(null);
+    });
+    groupPickerCancelBtn.addEventListener('click', closeGroupPicker);
+    groupPickerModal.addEventListener('click', event => { if (event.target === groupPickerModal) closeGroupPicker(); });
+    groupPickerList.addEventListener('click', event => {
+      const button = event.target.closest('.group-picker-item');
+      if (!button || !pendingGroupMotionName) return;
+      addMotionToGroup(button.dataset.groupId, pendingGroupMotionName);
+    });
+    rowsEl.addEventListener('click', event => {
+      const button = event.target.closest('.add-to-group-action');
+      if (!button) return;
+      openGroupPicker(button.dataset.motionName);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && groupPickerModal.classList.contains('open')) closeGroupPicker();
     });
     selectAll.addEventListener('change', event => rowsEl.querySelectorAll('input[type="checkbox"]').forEach(input => { input.checked = event.target.checked; }));
     dropZone.addEventListener('dragover', event => { event.preventDefault(); dropZone.classList.add('drag'); });

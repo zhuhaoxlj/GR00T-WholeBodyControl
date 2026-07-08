@@ -1,0 +1,48 @@
+Motion Information: Take_007_055_Skeleton7
+==================================================
+
+source_csv: /home/mark/Documents/Dance/GMR/web_app/runs/20260708_112931_db8c0ef437fa_Take_007_055_Skeleton7/Take_007_055_Skeleton7_sonic_input.csv
+fps: 50.0
+source_slice: [0:]
+
+joint_pos:
+  Shape: (201, 29)
+  Dtype: float32
+  Range: [-2.353, 1.823]
+  Sample: [-1.1396242   0.46281454  0.3954754   0.25512832 -0.5211548 ]
+
+joint_vel:
+  Shape: (201, 29)
+  Dtype: float32
+  Range: [-35.265, 27.795]
+  Sample: [ 0.1811239  -0.21199265 -0.02746317  0.03222726  0.09061102]
+
+body_pos_w:
+  Shape: (201, 14, 3)
+  Dtype: float32
+  Range: [-1.280, 0.994]
+  Sample: [-0.19375454  0.35375047  0.67783916 -0.25116515  0.24379689]
+
+body_quat_w:
+  Shape: (201, 14, 4)
+  Dtype: float32
+  Range: [-0.745, 0.999]
+  Sample: [ 0.21934809 -0.0920803   0.05465413  0.96975285  0.13926005]
+
+body_lin_vel_w:
+  Shape: (201, 14, 3)
+  Dtype: float32
+  Range: [-3.696, 4.678]
+  Sample: [0.03241706 0.02218369 0.04064868 0.03165664 0.02533289]
+
+body_ang_vel_w:
+  Shape: (201, 14, 3)
+  Dtype: float32
+  Range: [-19.528, 19.749]
+  Sample: [ 0.00481347 -0.04244327 -0.07797472 -0.08763058 -0.19959986]
+
+_body_indexes:
+  Shape: (14,)
+  Dtype: int64
+  Range: [0.000, 29.000]
+  Sample: [ 0  4 10 18  5]
