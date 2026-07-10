@@ -715,10 +715,11 @@ class GamepadManager : public InputInterface {
             (motion_reader.current_motion_index_ - 1 + motion_reader.motions.size()) % motion_reader.motions.size();
         {
           std::lock_guard<std::mutex> lock(current_motion_mutex);
-          operator_state.play = false;
-          current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
           current_frame = 0;
           reinitialize_heading = true;
+          operator_state.play = false;
         }
       }
 
@@ -726,23 +727,33 @@ class GamepadManager : public InputInterface {
         motion_reader.current_motion_index_ = (motion_reader.current_motion_index_ + 1) % motion_reader.motions.size();
         {
           std::lock_guard<std::mutex> lock(current_motion_mutex);
-          operator_state.play = false;
-          current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
           current_frame = 0;
           reinitialize_heading = true;
+          operator_state.play = false;
         }
       }
 
       if (play_motion_) {
         std::lock_guard<std::mutex> lock(current_motion_mutex);
+        if (IsInitialStandingReferenceMotion(current_motion)) {
+          auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+          current_motion = CreateGentleReferenceMotionTransition(
+              current_motion, current_frame, target_motion);
+          current_frame = 0;
+          reinitialize_heading = true;
+        }
         operator_state.play = true;
       }
 
       if (motion_restart_) {
         std::lock_guard<std::mutex> lock(current_motion_mutex);
-        operator_state.play = false;
+        auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+        current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
         current_frame = 0;
         reinitialize_heading = true;
+        operator_state.play = false;
       }
 
       if (start_control_) { operator_state.start = true; }

@@ -398,11 +398,12 @@ class SimpleKeyboard : public InputInterface {
           std::string motion_name;
           {
             std::lock_guard<std::mutex> lock(current_motion_mutex);
-            operator_state.play = false;
-            current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);  // Update current motion directly
+            auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+            current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
             current_frame = 0;
-            motion_name = current_motion->name;
+            motion_name = target_motion ? target_motion->name : "unknown_motion";
             reinitialize_heading = true;
+            operator_state.play = false;
           }
       }
 
@@ -411,11 +412,12 @@ class SimpleKeyboard : public InputInterface {
           std::string motion_name;
           {
             std::lock_guard<std::mutex> lock(current_motion_mutex);
-            operator_state.play = false;
-            current_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);  // Update current motion directly
+            auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+            current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
             current_frame = 0;
-            motion_name = current_motion->name;
+            motion_name = target_motion ? target_motion->name : "unknown_motion";
             reinitialize_heading = true;
+            operator_state.play = false;
           }
       }
 
@@ -426,6 +428,13 @@ class SimpleKeyboard : public InputInterface {
               size_t timesteps_copy;
               {
                 std::lock_guard<std::mutex> lock(current_motion_mutex);
+                if (IsInitialStandingReferenceMotion(current_motion)) {
+                  auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+                  current_motion = CreateGentleReferenceMotionTransition(
+                      current_motion, current_frame, target_motion);
+                  current_frame = 0;
+                  reinitialize_heading = true;
+                }
                 operator_state.play = true;
                 motion_name = current_motion ? current_motion->name : "unknown_motion";
                 frame_copy = current_frame;
@@ -445,11 +454,13 @@ class SimpleKeyboard : public InputInterface {
       if (this->motion_restart) {
           {
             std::lock_guard<std::mutex> lock(current_motion_mutex);
-            operator_state.play = false;
+            auto target_motion = motion_reader.GetMotionShared(motion_reader.current_motion_index_);
+            current_motion = CreateGentleReferenceMotionTransition(current_motion, current_frame, target_motion);
             current_frame = 0;
             reinitialize_heading = true;
+            operator_state.play = false;
           }
-          std::cout << "Reset motion " << motion_reader.current_motion_index_ << " to frame 0 (paused)" << std::endl;
+          std::cout << "Reset motion " << motion_reader.current_motion_index_ << " to frame 0 gently" << std::endl;
       }
 
       if (this->stop_control) { operator_state.stop = true; }

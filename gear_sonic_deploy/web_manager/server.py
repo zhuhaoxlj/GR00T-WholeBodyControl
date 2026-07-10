@@ -78,8 +78,15 @@ MOTION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 MOTION_ALIAS_FILE = MOTION_DIR / ".motion_aliases.json"
 MOTION_GROUPS_FILE = MOTION_DIR / ".motion_groups.json"
 MOTION_PLAYBACK_REQUEST_FILE = MOTION_DIR / ".motion_playback_request.json"
+PLAYBACK_SETTINGS_FILE = MOTION_DIR / ".playback_settings.json"
 MOTION_ALIAS_MAX_LENGTH = 80
 MOTION_GROUP_NAME_MAX_LENGTH = 80
+PLAYBACK_END_POSE_TARGET_MOTION_START = "motion_start"
+PLAYBACK_END_POSE_TARGET_INITIAL_STANDING = "initial_standing"
+PLAYBACK_END_POSE_TARGETS = {
+    PLAYBACK_END_POSE_TARGET_MOTION_START,
+    PLAYBACK_END_POSE_TARGET_INITIAL_STANDING,
+}
 PRESET_MOTION_NAMES = {
     "dance_in_da_party_001__A464",
     "dance_in_da_party_001__A464_M",
@@ -177,6 +184,42 @@ def clean_motion_group_name(name: str | None) -> str:
             detail=f"Motion group name must be <= {MOTION_GROUP_NAME_MAX_LENGTH} characters",
         )
     return cleaned
+
+
+def clean_playback_end_pose_target(value: Any) -> str:
+    if value is None:
+        return PLAYBACK_END_POSE_TARGET_MOTION_START
+    cleaned = str(value).strip()
+    if cleaned not in PLAYBACK_END_POSE_TARGETS:
+        raise HTTPException(status_code=400, detail=f"Invalid end_pose_target: {value!r}")
+    return cleaned
+
+
+def read_playback_settings() -> dict[str, Any]:
+    try:
+        data = json.loads(PLAYBACK_SETTINGS_FILE.read_text())
+        target = clean_playback_end_pose_target(data.get("end_pose_target"))
+        return {"end_pose_target": target, "configured": True}
+    except (FileNotFoundError, json.JSONDecodeError, HTTPException, OSError, AttributeError):
+        return {
+            "end_pose_target": PLAYBACK_END_POSE_TARGET_MOTION_START,
+            "configured": False,
+        }
+
+
+def write_playback_settings(end_pose_target: str) -> dict[str, Any]:
+    target = clean_playback_end_pose_target(end_pose_target)
+    payload = {
+        "end_pose_target": target,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    ensure_motion_dir()
+    temporary_path = PLAYBACK_SETTINGS_FILE.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    temporary_path.replace(PLAYBACK_SETTINGS_FILE)
+    return {**payload, "configured": True}
 
 
 def read_motion_aliases() -> dict[str, str]:
@@ -309,10 +352,14 @@ def remove_motion_from_groups(motion_name: str) -> None:
         write_motion_groups(groups)
 
 
-def write_motion_playback_request(group: dict[str, Any]) -> dict[str, Any]:
+def write_motion_playback_request(
+    group: dict[str, Any],
+    end_pose_target: str = PLAYBACK_END_POSE_TARGET_MOTION_START,
+) -> dict[str, Any]:
     if not group["motion_names"]:
         raise HTTPException(status_code=400, detail="Motion group is empty")
     motion_names = validate_motion_names(group["motion_names"])
+    cleaned_end_pose_target = clean_playback_end_pose_target(end_pose_target)
     request_id = uuid.uuid4().hex
     payload = {
         "request_id": request_id,
@@ -320,6 +367,30 @@ def write_motion_playback_request(group: dict[str, Any]) -> dict[str, Any]:
         "group_id": group["id"],
         "group_name": group["name"],
         "motion_names": motion_names,
+        "end_pose_target": cleaned_end_pose_target,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    ensure_motion_dir()
+    MOTION_PLAYBACK_REQUEST_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    return payload
+
+
+def write_single_motion_playback_request(
+    motion_name: str,
+    end_pose_target: str = PLAYBACK_END_POSE_TARGET_MOTION_START,
+) -> dict[str, Any]:
+    cleaned_motion_name = safe_motion_name(motion_name)
+    if not motion_exists(cleaned_motion_name):
+        raise HTTPException(status_code=404, detail="Motion not found")
+    cleaned_end_pose_target = clean_playback_end_pose_target(end_pose_target)
+    request_id = uuid.uuid4().hex
+    payload = {
+        "request_id": request_id,
+        "type": "motion",
+        "motion_name": cleaned_motion_name,
+        "end_pose_target": cleaned_end_pose_target,
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     ensure_motion_dir()
@@ -669,7 +740,8 @@ def normalize_sonic_status(raw: dict[str, Any] | None, source: str, stamp: float
     if not sonic_mode:
         sonic_mode = "planner" if planner_enabled else "motion"
     current_motion = raw.get("current_motion") or raw.get("motion_name")
-    current_action = action_name if sonic_mode == "planner" else current_motion
+    selected_motion = raw.get("selected_motion") or current_motion
+    current_action = action_name if sonic_mode == "planner" else selected_motion
 
     return {
         "connected": now - updated_at <= SONIC_STATUS_STALE_SECONDS,
@@ -683,6 +755,7 @@ def normalize_sonic_status(raw: dict[str, Any] | None, source: str, stamp: float
         "planner_initialized": planner_initialized,
         "motion": {
             "current": current_motion,
+            "selected": selected_motion,
             "frame": raw.get("current_frame"),
             "actions": [path.name for path in iter_motion_dirs()],
         },
@@ -866,6 +939,16 @@ def sonic_status() -> dict:
     return normalize_sonic_status(None, "default")
 
 
+@app.get("/api/playback-settings")
+def get_playback_settings() -> dict[str, Any]:
+    return read_playback_settings()
+
+
+@app.put("/api/playback-settings")
+def update_playback_settings(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    return write_playback_settings(payload.get("end_pose_target"))
+
+
 @app.get("/api/motions")
 def list_motions() -> dict:
     motions = []
@@ -934,9 +1017,17 @@ def delete_motion_group(group_id: str) -> dict:
 
 
 @app.post("/api/motion-groups/{group_id}/play")
-def play_motion_group(group_id: str) -> dict:
+def play_motion_group(group_id: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
     _, group = find_motion_group(group_id)
-    request = write_motion_playback_request(group)
+    end_pose_target = clean_playback_end_pose_target(payload.get("end_pose_target"))
+    request = write_motion_playback_request(group, end_pose_target=end_pose_target)
+    return {"ok": True, "request_id": request["request_id"], "request": request}
+
+
+@app.post("/api/motions/{name}/play")
+def play_single_motion(name: str, payload: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    end_pose_target = clean_playback_end_pose_target(payload.get("end_pose_target"))
+    request = write_single_motion_playback_request(name, end_pose_target=end_pose_target)
     return {"ok": True, "request_id": request["request_id"], "request": request}
 
 

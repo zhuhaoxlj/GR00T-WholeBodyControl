@@ -377,6 +377,30 @@
     }
     .group-playing-motion { overflow-wrap: anywhere; color: var(--ink); }
     .group-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .playback-end-pose-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 5px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .playback-end-pose-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .playback-end-pose-option input { margin: 0; }
     .group-drop { min-height: 56px; padding: 10px; display: grid; gap: 8px; }
     .group-item {
       display: grid;
@@ -644,7 +668,7 @@
         sonicStatusTitle: 'Sonic 状态', refreshStatus: '刷新状态', statusConnection: '连接', statusMode: '模式', statusAction: '当前动作', statusProgram: '程序状态', connected: '在线', disconnected: '离线/等待数据', motionMode: '动作模式', plannerMode: 'Planner 模式', motionSection: '动作模式', plannerSection: 'Planner 模式', current: '当前', noAction: '无', statusMeta: '来源：{source}｜更新时间：{time}｜延迟：{seconds}s',
         commandGuideTitle: '切换命令提示', keyboardGuide: 'Keyboard 键位', gamepadGuide: 'Gamepad 键位', expandGuide: '展开', collapseGuide: '收起',
         aliasTitle: '给动作起一个显示别名', aliasCopy: '这个别名只用于页面显示，不会改变动作文件夹名。', cancel: '取消', confirmUpload: '确认上传', confirmAlias: '保存别名', aliasPlaceholder: '例如：开场挥手 / 机器人热舞', uploadCancelled: '已取消上传。', aliasRequired: '请先输入动作显示别名。', editAlias: '修改别名', presetLocked: '预制动作不可改名', aliasUpdated: '已更新动作别名：{name}', aliasUpdateFailed: '更新别名失败：', editAliasTitle: '修改动作显示别名',
-        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中', currentPlaying: '正在播放', currentGroupMotion: '第 {index}/{total} 个'
+        groupsTitle: '动作组', refreshGroups: '刷新动作组', groupNamePlaceholder: '动作组名称', createGroup: '新建动作组', groupReady: '可把动作列表中的动作拖入动作组。', groupEmpty: '还没有动作组。', groupDropEmpty: '拖入动作片段', groupItems: '{count} 个动作', playGroup: '播放', renameGroup: '重命名', deleteGroup: '删除', pinToTop: '置顶', moveUp: '上移', moveDown: '下移', removeFromGroup: '移除', addToGroup: '加入动作组', groupPickerTitle: '选择动作组', groupPickerCopy: '把「{name}」追加到动作组末尾。', chooseGroup: '选择', noGroupsToAdd: '还没有动作组，请先新建动作组。', addedToGroup: '已把「{motion}」加入动作组：{group}', groupNameRequired: '请先输入动作组名称。', groupCreated: '已创建动作组：{name}', groupCreateFailed: '创建动作组失败：', groupUpdated: '已更新动作组：{name}', groupUpdateFailed: '更新动作组失败：', confirmDeleteGroup: '确定删除动作组「{name}」吗？', groupDeleted: '已删除动作组：{name}', groupDeleteFailed: '删除动作组失败：', groupPlayRequested: '已请求播放动作组：{name}', groupPlayFailed: '播放动作组失败：', activeGroup: '播放中', currentPlaying: '正在播放', currentGroupMotion: '第 {index}/{total} 个', returnInitialStanding: '完成后回初始站立', returnMotionStart: '完成后回播放起点第 0 帧', playbackSettingsFailed: '保存播放结束设置失败：', playMotion: '播放', motionPlayRequested: '已请求播放动作：{name}', motionPlayFailed: '播放动作失败：'
       },
       en: {
         eyebrow: 'Local Motion Library', title: 'Sonic Motion Manager', subtitle: 'Drop a motion zip or select a motion folder. Sonic will receive a hot-reload request after upload.',
@@ -655,7 +679,7 @@
         sonicStatusTitle: 'Sonic Status', refreshStatus: 'Refresh status', statusConnection: 'Connection', statusMode: 'Mode', statusAction: 'Current action', statusProgram: 'Program', connected: 'Online', disconnected: 'Offline / waiting', motionMode: 'Motion mode', plannerMode: 'Planner mode', motionSection: 'Motion mode', plannerSection: 'Planner mode', current: 'Current', noAction: 'None', statusMeta: 'Source: {source} | Updated: {time} | Lag: {seconds}s',
         commandGuideTitle: 'Switching guide', keyboardGuide: 'Keyboard keys', gamepadGuide: 'Gamepad buttons', expandGuide: 'Expand', collapseGuide: 'Collapse',
         aliasTitle: 'Name this motion', aliasCopy: 'This alias is only used for display and will not rename the motion folder.', cancel: 'Cancel', confirmUpload: 'Upload', confirmAlias: 'Save alias', aliasPlaceholder: 'Example: Opening wave / Robot dance', uploadCancelled: 'Upload cancelled.', aliasRequired: 'Please enter a display alias first.', editAlias: 'Edit alias', presetLocked: 'Preset motion cannot be renamed', aliasUpdated: 'Updated motion alias: {name}', aliasUpdateFailed: 'Failed to update alias: ', editAliasTitle: 'Edit motion display alias',
-        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing', currentPlaying: 'Now playing', currentGroupMotion: '{index}/{total}'
+        groupsTitle: 'Motion Groups', refreshGroups: 'Refresh groups', groupNamePlaceholder: 'Group name', createGroup: 'New group', groupReady: 'Drag motions from the motion list into a group.', groupEmpty: 'No motion groups yet.', groupDropEmpty: 'Drop motion clips here', groupItems: '{count} motion(s)', playGroup: 'Play', renameGroup: 'Rename', deleteGroup: 'Delete', pinToTop: 'Top', moveUp: 'Up', moveDown: 'Down', removeFromGroup: 'Remove', addToGroup: 'Add to group', groupPickerTitle: 'Choose a group', groupPickerCopy: 'Append "{name}" to the end of a motion group.', chooseGroup: 'Choose', noGroupsToAdd: 'No motion groups yet. Create one first.', addedToGroup: 'Added "{motion}" to group: {group}', groupNameRequired: 'Enter a group name first.', groupCreated: 'Created motion group: {name}', groupCreateFailed: 'Failed to create group: ', groupUpdated: 'Updated motion group: {name}', groupUpdateFailed: 'Failed to update group: ', confirmDeleteGroup: 'Delete motion group "{name}"?', groupDeleted: 'Deleted motion group: {name}', groupDeleteFailed: 'Failed to delete group: ', groupPlayRequested: 'Requested playback for group: {name}', groupPlayFailed: 'Failed to play group: ', activeGroup: 'Playing', currentPlaying: 'Now playing', currentGroupMotion: '{index}/{total}', returnInitialStanding: 'Return to initial standing after completion', returnMotionStart: 'Return to playback start frame 0 after completion', playbackSettingsFailed: 'Failed to save playback end setting: ', playMotion: 'Play', motionPlayRequested: 'Requested playback for motion: {name}', motionPlayFailed: 'Failed to play motion: '
       }
     };
 
@@ -669,6 +693,13 @@
     let controlScheme = localStorage.getItem('sonic-control-scheme') || 'keyboard';
     let commandGuideExpanded = false;
     let draggedMotionName = null;
+    const PLAYBACK_END_POSE_TARGET_MOTION_START = 'motion_start';
+    const PLAYBACK_END_POSE_TARGET_INITIAL_STANDING = 'initial_standing';
+    const playbackEndPoseStorageKey = 'sonic-playback-end-pose-target';
+    let playbackEndPoseTarget = localStorage.getItem(playbackEndPoseStorageKey) || PLAYBACK_END_POSE_TARGET_MOTION_START;
+    if (![PLAYBACK_END_POSE_TARGET_MOTION_START, PLAYBACK_END_POSE_TARGET_INITIAL_STANDING].includes(playbackEndPoseTarget)) {
+      playbackEndPoseTarget = PLAYBACK_END_POSE_TARGET_MOTION_START;
+    }
     const statusEl = document.getElementById('status');
     const groupStatusEl = document.getElementById('groupStatus');
     const groupListEl = document.getElementById('groupList');
@@ -735,11 +766,29 @@
       tired_one_leg_jumping_R_001__A359_M: '疲惫右脚单腿跳（镜像）',
       walking_quip_360_R_002__A428: '360 度俏皮转身走',
       walking_quip_360_R_002__A428_M: '360 度俏皮转身走（镜像）',
+      initial_standing_pose: '初始站立',
     };
 
+    function referenceMotionName(name) {
+      let normalized = name || '';
+      const prefixes = ['transition_motion:', 'end_transition_motion:'];
+      let matched = true;
+      while (matched) {
+        matched = false;
+        for (const prefix of prefixes) {
+          if (normalized.startsWith(prefix)) {
+            normalized = normalized.slice(prefix.length);
+            matched = true;
+          }
+        }
+      }
+      return normalized;
+    }
+
     function motionLabel(name) {
-      if (motionAliases[name]) return motionAliases[name];
-      return lang === 'zh' ? MOTION_LABELS_ZH[name] : null;
+      const referenceName = referenceMotionName(name);
+      if (motionAliases[referenceName]) return motionAliases[referenceName];
+      return lang === 'zh' ? MOTION_LABELS_ZH[referenceName] : null;
     }
 
     function motionNameHtml(name) {
@@ -892,10 +941,11 @@
         const aliasAction = motion.alias_editable
           ? `<button class="secondary mini-action" onclick="editMotionAlias('${escapeHtml(motion.name)}')">${t('editAlias')}</button>`
           : `<span class="locked-copy">${t('presetLocked')}</span>`;
+        const playAction = `<button class="mini-action play-motion-action" type="button" data-motion-name="${escapeHtml(motion.name)}" ${motion.valid ? '' : 'disabled'}>${t('playMotion')}</button>`;
         const groupAction = `<button class="secondary mini-action add-to-group-action" type="button" data-motion-name="${escapeHtml(motion.name)}">${t('addToGroup')}</button>`;
         tr.innerHTML = `
           <td><input type="checkbox" value="${escapeHtml(motion.name)}"></td>
-          <td><span class="motion-name">${motionNameHtml(motion.name)}<span class="motion-name-actions">${aliasAction}${groupAction}</span></span></td>
+          <td><span class="motion-name">${motionNameHtml(motion.name)}<span class="motion-name-actions">${playAction}${aliasAction}${groupAction}</span></span></td>
           <td>${badge}${errors}</td>
           <td>${motion.timesteps ?? ''}</td>
           <td>${sizeText(motion.size_bytes)}</td>
@@ -930,6 +980,50 @@
       return lastSonicStatus && lastSonicStatus.playback_group && lastSonicStatus.playback_group.active
         ? lastSonicStatus.playback_group
         : null;
+    }
+
+    function updatePlaybackEndPoseControls() {
+      document.querySelectorAll('input[name="playbackEndPoseTarget"]').forEach(input => {
+        input.checked = input.value === playbackEndPoseTarget;
+      });
+    }
+
+    function setPlaybackEndPoseTarget(nextTarget) {
+      playbackEndPoseTarget = nextTarget === PLAYBACK_END_POSE_TARGET_INITIAL_STANDING
+        ? PLAYBACK_END_POSE_TARGET_INITIAL_STANDING
+        : PLAYBACK_END_POSE_TARGET_MOTION_START;
+      localStorage.setItem(playbackEndPoseStorageKey, playbackEndPoseTarget);
+      updatePlaybackEndPoseControls();
+      void savePlaybackSettings();
+    }
+
+    async function savePlaybackSettings() {
+      try {
+        await api('/api/playback-settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ end_pose_target: playbackEndPoseTarget })
+        });
+      } catch (err) {
+        setStatus(t('playbackSettingsFailed') + err.message);
+      }
+    }
+
+    async function loadPlaybackSettings() {
+      try {
+        const data = await api('/api/playback-settings');
+        if (data.configured) {
+          playbackEndPoseTarget = data.end_pose_target === PLAYBACK_END_POSE_TARGET_INITIAL_STANDING
+            ? PLAYBACK_END_POSE_TARGET_INITIAL_STANDING
+            : PLAYBACK_END_POSE_TARGET_MOTION_START;
+          localStorage.setItem(playbackEndPoseStorageKey, playbackEndPoseTarget);
+          updatePlaybackEndPoseControls();
+          return;
+        }
+        await savePlaybackSettings();
+      } catch (err) {
+        setStatus(t('playbackSettingsFailed') + err.message);
+      }
     }
 
     function renderMotionGroups(data) {
@@ -1140,19 +1234,37 @@
       } catch (err) { setGroupStatus(t('groupDeleteFailed') + err.message); }
     }
 
+    async function playSingleMotion(motionName) {
+      const motionDisplay = motionLabel(motionName) || motionName;
+      try {
+        await api('/api/motions/' + encodeURIComponent(motionName) + '/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ end_pose_target: playbackEndPoseTarget })
+        });
+        setStatus(t('motionPlayRequested', { name: motionDisplay }));
+        await loadSonicStatus();
+      } catch (err) { setStatus(t('motionPlayFailed') + err.message); }
+    }
+
     async function playMotionGroup(groupId) {
       const group = findGroup(groupId);
       if (!group) return;
       try {
-        await api('/api/motion-groups/' + encodeURIComponent(groupId) + '/play', { method: 'POST' });
+        await api('/api/motion-groups/' + encodeURIComponent(groupId) + '/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ end_pose_target: playbackEndPoseTarget })
+        });
         setGroupStatus(t('groupPlayRequested', { name: group.name }));
         await loadSonicStatus();
       } catch (err) { setGroupStatus(t('groupPlayFailed') + err.message); }
     }
 
     function renderChips(items, activeName) {
+      const activeReferenceName = referenceMotionName(activeName);
       return (items || []).map(name => {
-        const active = name === activeName ? ' active' : '';
+        const active = name === activeReferenceName ? ' active' : '';
         return `<span class="chip motion-chip${active}">${motionChipHtml(name)}</span>`;
       }).join('') || `<span class="chip">${t('noAction')}</span>`;
     }
@@ -1161,9 +1273,10 @@
       lastSonicStatus = data;
       if (lastMotionGroups) renderMotionGroups(lastMotionGroups);
       const isPlanner = data.sonic_mode === 'planner';
+      const currentAction = isPlanner ? data.current_action : referenceMotionName(data.current_action);
       setText('sonicConnected', data.connected ? t('connected') : t('disconnected'));
       setText('sonicMode', isPlanner ? t('plannerMode') : t('motionMode'));
-      setText('sonicAction', motionLabel(data.current_action) || data.current_action || t('noAction'));
+      setText('sonicAction', motionLabel(currentAction) || currentAction || t('noAction'));
       setText('sonicProgram', data.program_state || '-');
 
       const motionActions = (data.motion && data.motion.actions) || [];
@@ -1180,12 +1293,23 @@
       sonicSectionsEl.innerHTML = `
         <div class="mode-section${isPlanner ? '' : ' active'}">
           <div class="mode-title"><span>${t('motionSection')}</span><span class="badge ${isPlanner ? 'bad' : 'ok'}">${isPlanner ? '' : t('current')}</span></div>
-          <div class="chip-list">${renderChips(motionActions, data.motion && data.motion.current)}</div>
+          <div class="chip-list">${renderChips(motionActions, data.motion && (data.motion.selected || data.motion.current))}</div>
+          <div class="playback-end-pose-controls" role="radiogroup" aria-label="Playback end pose target">
+            <label class="playback-end-pose-option">
+              <input type="radio" name="playbackEndPoseTarget" value="motion_start" onchange="setPlaybackEndPoseTarget(this.value)">
+              <span>${t('returnMotionStart')}</span>
+            </label>
+            <label class="playback-end-pose-option">
+              <input type="radio" name="playbackEndPoseTarget" value="initial_standing" onchange="setPlaybackEndPoseTarget(this.value)">
+              <span>${t('returnInitialStanding')}</span>
+            </label>
+          </div>
         </div>
         <div class="mode-section${isPlanner ? ' active' : ''}">
           <div class="mode-title"><span>${t('plannerSection')}</span><span class="badge ${isPlanner ? 'ok' : 'bad'}">${isPlanner ? t('current') : ''}</span></div>
           <div class="mode-sections">${plannerHtml}</div>
         </div>`;
+      updatePlaybackEndPoseControls();
 
       document.getElementById('sonicStatusMeta').textContent = t('statusMeta', {
         source: data.source || '-',
@@ -1277,6 +1401,8 @@
       addMotionToGroup(button.dataset.groupId, pendingGroupMotionName);
     });
     rowsEl.addEventListener('click', event => {
+      const playButton = event.target.closest('.play-motion-action');
+      if (playButton) return playSingleMotion(playButton.dataset.motionName);
       const button = event.target.closest('.add-to-group-action');
       if (!button) return;
       openGroupPicker(button.dataset.motionName);
@@ -1289,8 +1415,10 @@
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
     dropZone.addEventListener('drop', event => { event.preventDefault(); dropZone.classList.remove('drag'); uploadFiles(event.dataTransfer.files); });
 
+    updatePlaybackEndPoseControls();
     applyLanguage(lang);
     loadSonicStatus();
+    loadPlaybackSettings();
     loadMotions();
     loadMotionGroups();
     setInterval(loadSonicStatus, 1000);

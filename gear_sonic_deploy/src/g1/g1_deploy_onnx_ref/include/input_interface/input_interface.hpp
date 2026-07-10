@@ -30,15 +30,230 @@
 #define INPUT_INTERFACE_HPP
 
 #include <unistd.h>
+#include <algorithm>
 #include <atomic>
+#include <iostream>
 #include <queue>
 #include <memory>
 #include <optional>
+#include <string>
 #include "../utils.hpp"              // For DataBuffer  
 #include "../robot_parameters.hpp"   // For HeadingState, OperatorState
 #include "../motion_data_reader.hpp" // For MotionDataReader, MotionSequence
 #include "../math_utils.hpp"         // For float_to_double
 #include "../localmotion_kplanner.hpp" // For PlannerState, MovementState
+
+namespace input_interface_motion_transition_detail {
+
+constexpr int kGentleMotionTransitionFrames = 100;  // 2.0 s at the 50 Hz control rate.
+
+inline double CalculateSmoothStepRatio(double raw_ratio) {
+    double clamped_ratio = std::clamp(raw_ratio, 0.0, 1.0);
+    return clamped_ratio * clamped_ratio * (3.0 - 2.0 * clamped_ratio);
+}
+
+inline double InterpolateScalar(double start_value, double end_value, double blend_ratio) {
+    return start_value + (end_value - start_value) * blend_ratio;
+}
+
+}  // namespace input_interface_motion_transition_detail
+
+inline std::shared_ptr<const MotionSequence> CreateGentleReferenceMotionTransition(
+    const std::shared_ptr<const MotionSequence>& source_motion,
+    int source_frame,
+    const std::shared_ptr<const MotionSequence>& target_motion,
+    bool append_target_motion = true,
+    const std::string& transition_motion_name_prefix = "transition_motion:") {
+    using namespace input_interface_motion_transition_detail;
+
+    if (!target_motion || target_motion->timesteps <= 0) {
+        return target_motion;
+    }
+
+    if (!source_motion || source_motion->timesteps <= 0) {
+        return target_motion;
+    }
+
+    const int normalized_source_frame = std::clamp(source_frame, 0, source_motion->timesteps - 1);
+    const int transition_frame_count = kGentleMotionTransitionFrames;
+    const int appended_target_frame_count = append_target_motion ? target_motion->timesteps : 0;
+    const int total_frame_count = transition_frame_count + appended_target_frame_count;
+
+    auto transition_motion = std::make_shared<MotionSequence>();
+    transition_motion->name = transition_motion_name_prefix + target_motion->name;
+    transition_motion->timesteps = total_frame_count;
+    transition_motion->encode_mode = target_motion->GetEncodeMode();
+    transition_motion->SetBodyPartIndexes(target_motion->BodyPartIndexes());
+    transition_motion->ReserveCapacity(total_frame_count,
+                                       target_motion->GetNumJoints(),
+                                       target_motion->GetNumBodies(),
+                                       target_motion->GetNumBodyQuaternions(),
+                                       target_motion->GetNumSmplJoints(),
+                                       target_motion->GetNumSmplPoses());
+
+    const int joint_count = target_motion->GetNumJoints();
+    const int body_count = target_motion->GetNumBodies();
+    const int body_quaternion_count = target_motion->GetNumBodyQuaternions();
+    const int smpl_joint_count = target_motion->GetNumSmplJoints();
+    const int smpl_pose_count = target_motion->GetNumSmplPoses();
+    const int common_joint_count = std::min(source_motion->GetNumJoints(), joint_count);
+    const int common_body_count = std::min(source_motion->GetNumBodies(), body_count);
+    const int common_body_quaternion_count = std::min(source_motion->GetNumBodyQuaternions(), body_quaternion_count);
+    const int common_smpl_joint_count = std::min(source_motion->GetNumSmplJoints(), smpl_joint_count);
+    const int common_smpl_pose_count = std::min(source_motion->GetNumSmplPoses(), smpl_pose_count);
+
+    if (source_motion->BodyPartIndexes() != target_motion->BodyPartIndexes()) {
+        std::cout << "[MotionTransition] Body layout differs; blending common channels to "
+                  << target_motion->name << std::endl;
+    }
+
+    const double* source_joint_positions = source_motion->JointPositions(normalized_source_frame);
+    const double* source_joint_velocities = source_motion->JointVelocities(normalized_source_frame);
+    const auto* source_body_positions = source_motion->BodyPositions(normalized_source_frame);
+    const auto* source_body_quaternions = source_motion->BodyQuaternions(normalized_source_frame);
+    const auto* source_body_linear_velocities = source_motion->BodyLinVelocities(normalized_source_frame);
+    const auto* source_body_angular_velocities = source_motion->BodyAngVelocities(normalized_source_frame);
+    const auto* source_smpl_joints = source_motion->SmplJoints(normalized_source_frame);
+    const auto* source_smpl_poses = source_motion->SmplPoses(normalized_source_frame);
+
+    const double* target_initial_joint_positions = target_motion->JointPositions(0);
+    const double* target_initial_joint_velocities = target_motion->JointVelocities(0);
+    const auto* target_initial_body_positions = target_motion->BodyPositions(0);
+    const auto* target_initial_body_quaternions = target_motion->BodyQuaternions(0);
+    const auto* target_initial_body_linear_velocities = target_motion->BodyLinVelocities(0);
+    const auto* target_initial_body_angular_velocities = target_motion->BodyAngVelocities(0);
+    const auto* target_initial_smpl_joints = target_motion->SmplJoints(0);
+    const auto* target_initial_smpl_poses = target_motion->SmplPoses(0);
+
+    for (int transition_frame = 0; transition_frame < transition_frame_count; ++transition_frame) {
+        const double raw_ratio = transition_frame_count <= 1
+                                     ? 1.0
+                                     : static_cast<double>(transition_frame) /
+                                           static_cast<double>(transition_frame_count - 1);
+        const double blend_ratio = CalculateSmoothStepRatio(raw_ratio);
+
+        double* destination_joint_positions = transition_motion->JointPositions(transition_frame);
+        double* destination_joint_velocities = transition_motion->JointVelocities(transition_frame);
+        for (int joint_index = 0; joint_index < joint_count; ++joint_index) {
+            if (joint_index < common_joint_count) {
+                destination_joint_positions[joint_index] = InterpolateScalar(
+                    source_joint_positions[joint_index], target_initial_joint_positions[joint_index], blend_ratio);
+                destination_joint_velocities[joint_index] = InterpolateScalar(
+                    source_joint_velocities[joint_index], target_initial_joint_velocities[joint_index], blend_ratio);
+            } else {
+                destination_joint_positions[joint_index] = target_initial_joint_positions[joint_index];
+                destination_joint_velocities[joint_index] = target_initial_joint_velocities[joint_index];
+            }
+        }
+
+        auto* destination_body_positions = transition_motion->BodyPositions(transition_frame);
+        auto* destination_body_linear_velocities = transition_motion->BodyLinVelocities(transition_frame);
+        auto* destination_body_angular_velocities = transition_motion->BodyAngVelocities(transition_frame);
+        for (int body_index = 0; body_index < body_count; ++body_index) {
+            for (int axis_index = 0; axis_index < 3; ++axis_index) {
+                if (body_index < common_body_count) {
+                    destination_body_positions[body_index][axis_index] = InterpolateScalar(
+                        source_body_positions[body_index][axis_index],
+                        target_initial_body_positions[body_index][axis_index],
+                        blend_ratio);
+                    destination_body_linear_velocities[body_index][axis_index] = InterpolateScalar(
+                        source_body_linear_velocities[body_index][axis_index],
+                        target_initial_body_linear_velocities[body_index][axis_index],
+                        blend_ratio);
+                    destination_body_angular_velocities[body_index][axis_index] = InterpolateScalar(
+                        source_body_angular_velocities[body_index][axis_index],
+                        target_initial_body_angular_velocities[body_index][axis_index],
+                        blend_ratio);
+                } else {
+                    destination_body_positions[body_index][axis_index] =
+                        target_initial_body_positions[body_index][axis_index];
+                    destination_body_linear_velocities[body_index][axis_index] =
+                        target_initial_body_linear_velocities[body_index][axis_index];
+                    destination_body_angular_velocities[body_index][axis_index] =
+                        target_initial_body_angular_velocities[body_index][axis_index];
+                }
+            }
+        }
+
+        auto* destination_body_quaternions = transition_motion->BodyQuaternions(transition_frame);
+        for (int body_index = 0; body_index < body_quaternion_count; ++body_index) {
+            if (body_index < common_body_quaternion_count) {
+                destination_body_quaternions[body_index] = quat_slerp_d(
+                    source_body_quaternions[body_index], target_initial_body_quaternions[body_index], blend_ratio);
+            } else {
+                destination_body_quaternions[body_index] = target_initial_body_quaternions[body_index];
+            }
+        }
+
+        auto* destination_smpl_joints = transition_motion->SmplJoints(transition_frame);
+        for (int smpl_joint_index = 0; smpl_joint_index < smpl_joint_count; ++smpl_joint_index) {
+            for (int axis_index = 0; axis_index < 3; ++axis_index) {
+                if (smpl_joint_index < common_smpl_joint_count) {
+                    destination_smpl_joints[smpl_joint_index][axis_index] = InterpolateScalar(
+                        source_smpl_joints[smpl_joint_index][axis_index],
+                        target_initial_smpl_joints[smpl_joint_index][axis_index],
+                        blend_ratio);
+                } else {
+                    destination_smpl_joints[smpl_joint_index][axis_index] =
+                        target_initial_smpl_joints[smpl_joint_index][axis_index];
+                }
+            }
+        }
+
+        auto* destination_smpl_poses = transition_motion->SmplPoses(transition_frame);
+        for (int smpl_pose_index = 0; smpl_pose_index < smpl_pose_count; ++smpl_pose_index) {
+            for (int axis_index = 0; axis_index < 3; ++axis_index) {
+                if (smpl_pose_index < common_smpl_pose_count) {
+                    destination_smpl_poses[smpl_pose_index][axis_index] = InterpolateScalar(
+                        source_smpl_poses[smpl_pose_index][axis_index],
+                        target_initial_smpl_poses[smpl_pose_index][axis_index],
+                        blend_ratio);
+                } else {
+                    destination_smpl_poses[smpl_pose_index][axis_index] =
+                        target_initial_smpl_poses[smpl_pose_index][axis_index];
+                }
+            }
+        }
+    }
+
+    for (int target_frame = 0; target_frame < appended_target_frame_count; ++target_frame) {
+        const int destination_frame = transition_frame_count + target_frame;
+
+        std::copy(target_motion->JointPositions(target_frame),
+                  target_motion->JointPositions(target_frame) + joint_count,
+                  transition_motion->JointPositions(destination_frame));
+        std::copy(target_motion->JointVelocities(target_frame),
+                  target_motion->JointVelocities(target_frame) + joint_count,
+                  transition_motion->JointVelocities(destination_frame));
+        std::copy(target_motion->BodyPositions(target_frame),
+                  target_motion->BodyPositions(target_frame) + body_count,
+                  transition_motion->BodyPositions(destination_frame));
+        std::copy(target_motion->BodyQuaternions(target_frame),
+                  target_motion->BodyQuaternions(target_frame) + body_quaternion_count,
+                  transition_motion->BodyQuaternions(destination_frame));
+        std::copy(target_motion->BodyLinVelocities(target_frame),
+                  target_motion->BodyLinVelocities(target_frame) + body_count,
+                  transition_motion->BodyLinVelocities(destination_frame));
+        std::copy(target_motion->BodyAngVelocities(target_frame),
+                  target_motion->BodyAngVelocities(target_frame) + body_count,
+                  transition_motion->BodyAngVelocities(destination_frame));
+        std::copy(target_motion->SmplJoints(target_frame),
+                  target_motion->SmplJoints(target_frame) + smpl_joint_count,
+                  transition_motion->SmplJoints(destination_frame));
+        std::copy(target_motion->SmplPoses(target_frame),
+                  target_motion->SmplPoses(target_frame) + smpl_pose_count,
+                  transition_motion->SmplPoses(destination_frame));
+    }
+
+    std::cout << "[MotionTransition] Gentle transition to " << target_motion->name
+              << " using " << transition_frame_count << " frames" << std::endl;
+    return transition_motion;
+}
+
+inline bool IsInitialStandingReferenceMotion(
+    const std::shared_ptr<const MotionSequence>& motion) {
+    return motion && motion->name == "initial_standing_pose";
+}
 
 /**
  * @class InputInterface

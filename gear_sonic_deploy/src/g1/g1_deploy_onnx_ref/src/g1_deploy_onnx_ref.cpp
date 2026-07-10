@@ -220,17 +220,25 @@ class G1Deploy {
     std::string motion_catalog_path_;
     std::filesystem::path motion_reload_flag_path_;
     std::filesystem::path motion_playback_request_path_;
+    std::filesystem::path playback_settings_path_;
     std::filesystem::path sonic_status_file_path_;
     std::optional<std::filesystem::file_time_type> last_motion_reload_flag_mtime_;
+    std::optional<std::filesystem::file_time_type> last_playback_settings_mtime_;
     std::chrono::steady_clock::time_point last_motion_reload_check_{};
     static constexpr std::chrono::milliseconds MOTION_RELOAD_CHECK_INTERVAL{500};
     std::chrono::steady_clock::time_point last_sonic_status_write_{};
     std::string last_sonic_status_signature_;
     static constexpr std::chrono::milliseconds SONIC_STATUS_WRITE_INTERVAL{200};
     std::string last_motion_playback_request_id_;
+    static constexpr const char* PLAYBACK_END_POSE_TARGET_MOTION_START = "motion_start";
+    static constexpr const char* PLAYBACK_END_POSE_TARGET_INITIAL_STANDING = "initial_standing";
+    std::string playback_end_pose_target_ = PLAYBACK_END_POSE_TARGET_MOTION_START;
+    std::shared_ptr<const MotionSequence> initial_standing_motion_;
+    std::shared_ptr<const MotionSequence> pending_end_pose_motion_;
     bool playback_group_active_ = false;
     std::string playback_group_id_;
     std::string playback_group_name_;
+    std::string playback_group_end_pose_target_ = PLAYBACK_END_POSE_TARGET_MOTION_START;
     std::vector<std::string> playback_group_motion_names_;
     std::vector<int> playback_group_motion_indices_;
     size_t playback_group_position_ = 0;
@@ -2222,6 +2230,9 @@ class G1Deploy {
       bool playback_group_active = false;
       std::string playback_group_id;
       std::string playback_group_name;
+      std::string playback_end_pose_target;
+      std::string playback_group_end_pose_target;
+      std::string selected_motion_name;
       std::vector<std::string> playback_group_motion_names;
       size_t playback_group_position = 0;
       {
@@ -2233,8 +2244,13 @@ class G1Deploy {
         playback_group_active = playback_group_active_;
         playback_group_id = playback_group_id_;
         playback_group_name = playback_group_name_;
+        playback_end_pose_target = playback_end_pose_target_;
+        playback_group_end_pose_target = playback_group_end_pose_target_;
         playback_group_motion_names = playback_group_motion_names_;
         playback_group_position = playback_group_position_;
+        auto selected_motion = motion_reader_.GetMotionShared(
+            static_cast<size_t>(motion_reader_.current_motion_index_));
+        if (selected_motion) { selected_motion_name = selected_motion->name; }
       }
 
       auto movement_data = movement_state_buffer_.GetDataWithTime();
@@ -2259,8 +2275,11 @@ class G1Deploy {
                 << movement_state.movement_speed << '|'
                 << movement_state.height << '|'
                 << motion_name << '|'
+                << selected_motion_name << '|'
+                << playback_end_pose_target << '|'
                 << (playback_group_active ? "group" : "single") << '|'
                 << playback_group_id << '|'
+                << playback_group_end_pose_target << '|'
                 << playback_group_position;
       const std::string current_signature = signature.str();
       if (current_signature == last_sonic_status_signature_ &&
@@ -2283,11 +2302,14 @@ class G1Deploy {
       out << "  \"movement_speed\": " << movement_speed << ",\n";
       out << "  \"height\": " << height << ",\n";
       out << "  \"current_motion\": \"" << JsonEscape(motion_name) << "\",\n";
+      out << "  \"selected_motion\": \"" << JsonEscape(selected_motion_name) << "\",\n";
       out << "  \"current_frame\": " << current_frame_snapshot << ",\n";
+      out << "  \"playback_end_pose_target\": \"" << JsonEscape(playback_end_pose_target) << "\",\n";
       out << "  \"playback_group\": {\n";
       out << "    \"active\": " << (playback_group_active ? "true" : "false") << ",\n";
       out << "    \"group_id\": \"" << JsonEscape(playback_group_id) << "\",\n";
       out << "    \"group_name\": \"" << JsonEscape(playback_group_name) << "\",\n";
+      out << "    \"end_pose_target\": \"" << JsonEscape(playback_group_end_pose_target) << "\",\n";
       out << "    \"current_index\": " << playback_group_position << ",\n";
       out << "    \"motion_names\": [";
       for (size_t i = 0; i < playback_group_motion_names.size(); ++i) {
@@ -2375,6 +2397,53 @@ class G1Deploy {
       return -1;
     }
 
+    std::string NormalizePlaybackEndPoseTarget(const std::string& requested_end_pose_target) const {
+      return requested_end_pose_target == PLAYBACK_END_POSE_TARGET_INITIAL_STANDING
+          ? std::string(PLAYBACK_END_POSE_TARGET_INITIAL_STANDING)
+          : std::string(PLAYBACK_END_POSE_TARGET_MOTION_START);
+    }
+
+    bool ApplyPlaybackSettings(bool force = false) {
+      if (playback_settings_path_.empty()) { return false; }
+
+      std::error_code ec;
+      if (!std::filesystem::exists(playback_settings_path_, ec) || ec) { return false; }
+      auto settings_mtime = std::filesystem::last_write_time(playback_settings_path_, ec);
+      if (ec) { return false; }
+      if (!force && last_playback_settings_mtime_ &&
+          settings_mtime == *last_playback_settings_mtime_) {
+        return false;
+      }
+
+      nlohmann::json settings;
+      try {
+        std::ifstream input(playback_settings_path_);
+        if (!input) { return false; }
+        input >> settings;
+      } catch (const std::exception& e) {
+        std::cerr << "[PlaybackSettings] Failed to read settings: " << e.what() << std::endl;
+        return false;
+      }
+
+      const std::string end_pose_target = NormalizePlaybackEndPoseTarget(
+          settings.value("end_pose_target", std::string(PLAYBACK_END_POSE_TARGET_MOTION_START)));
+      bool changed = false;
+      {
+        std::lock_guard<std::mutex> lock(current_motion_mutex_);
+        changed = playback_end_pose_target_ != end_pose_target;
+        playback_end_pose_target_ = end_pose_target;
+        if (playback_group_active_) {
+          playback_group_end_pose_target_ = end_pose_target;
+        }
+      }
+      last_playback_settings_mtime_ = settings_mtime;
+      if (changed || force) {
+        std::cout << "[PlaybackSettings] End pose target set to: "
+                  << end_pose_target << std::endl;
+      }
+      return changed;
+    }
+
     bool ReloadMotionData(const std::string& reason) {
       if (motion_data_path_.empty()) {
         std::cerr << "[MotionReload] Motion data path is empty; reload skipped" << std::endl;
@@ -2459,19 +2528,19 @@ class G1Deploy {
       return false;
     }
 
-    bool SelectMotionFromCatalog(const std::string& request) {
-      int motion_index = -1;
-      MotionCatalogEntry entry;
-      if (!this->motion_catalog_.Resolve(request, motion_index, entry)) {
-        std::cerr << "[GlobalCommand] Motion request not found or disabled: " << request << std::endl;
+    bool StartSingleMotionPlaybackByIndex(int motion_index,
+                                          const std::string& requested_end_pose_target,
+                                          const std::string& log_context) {
+      if (motion_index < 0) {
+        std::cerr << log_context << " Resolved motion index is invalid: " << motion_index << std::endl;
         return false;
       }
-
       auto selected_motion = this->motion_reader_.GetMotionShared(static_cast<size_t>(motion_index));
       if (!selected_motion) {
-        std::cerr << "[GlobalCommand] Resolved motion index is invalid: " << motion_index << std::endl;
+        std::cerr << log_context << " Resolved motion index is invalid: " << motion_index << std::endl;
         return false;
       }
+      const std::string end_pose_target = NormalizePlaybackEndPoseTarget(requested_end_pose_target);
 
       this->movement_state_buffer_.SetData(MovementState(static_cast<int>(LocomotionMode::IDLE),
                                                          {0.0f, 0.0f, 0.0f},
@@ -2480,21 +2549,44 @@ class G1Deploy {
         this->planner_->planner_state_.enabled = false;
         this->planner_->planner_state_.initialized = false;
       }
-      if (this->planner_motion_) { this->planner_motion_->timesteps = 0; }
-
       {
         std::lock_guard<std::mutex> lock(this->current_motion_mutex_);
         this->ClearMotionGroupPlaybackLocked();
+        this->pending_end_pose_motion_.reset();
+        this->playback_end_pose_target_ = end_pose_target;
         this->motion_reader_.current_motion_index_ = motion_index;
-        this->current_motion_ = selected_motion;
+        this->current_motion_ = CreateGentleReferenceMotionTransition(
+            this->current_motion_, this->current_frame_, selected_motion);
+        if (this->planner_motion_) { this->planner_motion_->timesteps = 0; }
         this->current_frame_ = 0;
+        this->saved_frame_for_observation_window_ = 0;
         this->reinitialize_heading_ = true;
         this->operator_state.start = true;
         this->operator_state.play = true;
       }
 
+      std::cout << log_context << " Playing motion '" << selected_motion->name
+                << "' with gentle transition; end_pose_target=" << end_pose_target << std::endl;
+      return true;
+    }
+
+    bool SelectMotionFromCatalog(
+        const std::string& request,
+        const std::string& requested_end_pose_target = PLAYBACK_END_POSE_TARGET_MOTION_START) {
+      int motion_index = -1;
+      MotionCatalogEntry entry;
+      if (!this->motion_catalog_.Resolve(request, motion_index, entry)) {
+        std::cerr << "[GlobalCommand] Motion request not found or disabled: " << request << std::endl;
+        return false;
+      }
+
+      if (!StartSingleMotionPlaybackByIndex(
+              motion_index, requested_end_pose_target, "[GlobalCommand]")) {
+        return false;
+      }
+
       std::cout << "[GlobalCommand] Playing motion '" << entry.id << "' (" << entry.display_name
-                << ") from frame 0" << std::endl;
+                << ")" << std::endl;
       return true;
     }
 
@@ -2502,9 +2594,76 @@ class G1Deploy {
       playback_group_active_ = false;
       playback_group_id_.clear();
       playback_group_name_.clear();
+      playback_group_end_pose_target_ = PLAYBACK_END_POSE_TARGET_MOTION_START;
       playback_group_motion_names_.clear();
       playback_group_motion_indices_.clear();
       playback_group_position_ = 0;
+    }
+
+    std::shared_ptr<const MotionSequence> CreateInitialStandingMotion(
+        const std::shared_ptr<const MotionSequence>& template_motion) const {
+      if (!template_motion || template_motion->timesteps <= 0) { return nullptr; }
+
+      auto standing_motion = std::make_shared<MotionSequence>();
+      standing_motion->name = "initial_standing_pose";
+      standing_motion->timesteps = 1;
+      standing_motion->encode_mode = template_motion->GetEncodeMode();
+      standing_motion->SetBodyPartIndexes(template_motion->BodyPartIndexes());
+      standing_motion->ReserveCapacity(
+          1,
+          template_motion->GetNumJoints(),
+          template_motion->GetNumBodies(),
+          template_motion->GetNumBodyQuaternions(),
+          template_motion->GetNumSmplJoints(),
+          template_motion->GetNumSmplPoses());
+
+      const int joint_count = template_motion->GetNumJoints();
+      for (int joint_index = 0; joint_index < joint_count; ++joint_index) {
+        standing_motion->JointPositions(0)[joint_index] = joint_index < G1_NUM_MOTOR
+            ? default_angles[mujoco_to_isaaclab[joint_index]]
+            : template_motion->JointPositions(0)[joint_index];
+        standing_motion->JointVelocities(0)[joint_index] = 0.0;
+      }
+
+      const int body_count = template_motion->GetNumBodies();
+      std::copy_n(template_motion->BodyPositions(0), body_count, standing_motion->BodyPositions(0));
+      std::fill_n(standing_motion->BodyLinVelocities(0), body_count, MotionSequence::Velocity{0.0, 0.0, 0.0});
+      std::fill_n(standing_motion->BodyAngVelocities(0), body_count, MotionSequence::Velocity{0.0, 0.0, 0.0});
+
+      const int body_quaternion_count = template_motion->GetNumBodyQuaternions();
+      std::copy_n(
+          template_motion->BodyQuaternions(0),
+          body_quaternion_count,
+          standing_motion->BodyQuaternions(0));
+
+      const int smpl_joint_count = template_motion->GetNumSmplJoints();
+      std::copy_n(template_motion->SmplJoints(0), smpl_joint_count, standing_motion->SmplJoints(0));
+      const int smpl_pose_count = template_motion->GetNumSmplPoses();
+      std::copy_n(template_motion->SmplPoses(0), smpl_pose_count, standing_motion->SmplPoses(0));
+
+      return standing_motion;
+    }
+
+    std::shared_ptr<const MotionSequence> ResolvePlaybackEndPoseTargetMotionLocked(
+        const std::string& end_pose_target,
+        int motion_start_index,
+        const std::string& log_context) {
+      if (end_pose_target == PLAYBACK_END_POSE_TARGET_INITIAL_STANDING) {
+        if (initial_standing_motion_) {
+          return initial_standing_motion_;
+        }
+        std::cerr << log_context
+                  << " Initial standing motion is unavailable; falling back to current motion start"
+                  << std::endl;
+      }
+
+      auto selected_motion = motion_start_index >= 0
+          ? motion_reader_.GetMotionShared(static_cast<size_t>(motion_start_index))
+          : nullptr;
+      if (selected_motion) {
+        motion_reader_.current_motion_index_ = motion_start_index;
+      }
+      return selected_motion;
     }
 
     bool ApplyMotionGroupPlaybackRequest() {
@@ -2526,9 +2685,33 @@ class G1Deploy {
       if (request_id.empty() || request_id == last_motion_playback_request_id_) { return false; }
       last_motion_playback_request_id_ = request_id;
 
-      if (request.value("type", "") != "motion_group" || !request.contains("motion_names") ||
+      const std::string request_type = request.value("type", "");
+      const std::string requested_end_pose_target = request.value(
+          "end_pose_target", std::string(PLAYBACK_END_POSE_TARGET_MOTION_START));
+      const std::string end_pose_target = NormalizePlaybackEndPoseTarget(requested_end_pose_target);
+
+      if (request_type == "motion") {
+        const std::string motion_name = request.value("motion_name", "");
+        int motion_index = FindMotionIndexByName(motion_reader_, motion_name);
+        if (motion_index < 0) {
+          std::cerr << "[MotionPlayback] Requested motion not loaded: " << motion_name << std::endl;
+          return false;
+        }
+        if (!StartSingleMotionPlaybackByIndex(motion_index, end_pose_target, "[MotionPlayback]")) {
+          return false;
+        }
+        std::error_code remove_error;
+        std::filesystem::remove(motion_playback_request_path_, remove_error);
+        if (remove_error) {
+          std::cerr << "[MotionPlayback] Warning: failed to remove consumed playback request: "
+                    << remove_error.message() << std::endl;
+        }
+        return true;
+      }
+
+      if (request_type != "motion_group" || !request.contains("motion_names") ||
           !request["motion_names"].is_array()) {
-        std::cerr << "[MotionGroup] Invalid playback request: expected type=motion_group with motion_names" << std::endl;
+        std::cerr << "[MotionPlayback] Invalid playback request: expected type=motion or type=motion_group" << std::endl;
         return false;
       }
 
@@ -2566,8 +2749,6 @@ class G1Deploy {
         planner_->planner_state_.enabled = false;
         planner_->planner_state_.initialized = false;
       }
-      if (planner_motion_) { planner_motion_->timesteps = 0; }
-
       const std::string group_id = request.value("group_id", "");
       const std::string group_name = request.value("group_name", "");
       {
@@ -2575,11 +2756,16 @@ class G1Deploy {
         playback_group_active_ = true;
         playback_group_id_ = group_id;
         playback_group_name_ = group_name;
+        playback_end_pose_target_ = end_pose_target;
+        playback_group_end_pose_target_ = end_pose_target;
         playback_group_motion_names_ = motion_names;
         playback_group_motion_indices_ = motion_indices;
         playback_group_position_ = 0;
+        pending_end_pose_motion_.reset();
         motion_reader_.current_motion_index_ = motion_indices.front();
-        current_motion_ = selected_motion;
+        current_motion_ = CreateGentleReferenceMotionTransition(
+            current_motion_, current_frame_, selected_motion);
+        if (planner_motion_) { planner_motion_->timesteps = 0; }
         current_frame_ = 0;
         saved_frame_for_observation_window_ = 0;
         reinitialize_heading_ = true;
@@ -2588,7 +2774,8 @@ class G1Deploy {
       }
 
       std::cout << "[MotionGroup] Playing group '" << group_name << "' with "
-                << motion_indices.size() << " motions from frame 0" << std::endl;
+                << motion_indices.size() << " motions using gentle transition; end_pose_target="
+                << end_pose_target << std::endl;
       std::error_code remove_error;
       std::filesystem::remove(motion_playback_request_path_, remove_error);
       if (remove_error) {
@@ -2633,6 +2820,7 @@ class G1Deploy {
           return true;
         }
         motion_reader_.current_motion_index_ = next_index;
+        // Treat the group as one continuous motion; only its outer boundaries blend.
         current_motion_ = next_motion;
         current_frame_ = 0;
         saved_frame_for_observation_window_ = 0;
@@ -2645,11 +2833,36 @@ class G1Deploy {
         return true;
       }
 
+      const int group_start_motion_index = playback_group_motion_indices_.front();
+      auto end_pose_target_motion = ResolvePlaybackEndPoseTargetMotionLocked(
+          playback_group_end_pose_target_, group_start_motion_index, "[MotionGroup]");
+      if (end_pose_target_motion) {
+        const int completed_source_frame = std::max(0, current_motion_->timesteps - 1);
+        const std::string completed_group_name = playback_group_name_;
+        const std::string end_pose_target = playback_group_end_pose_target_;
+        pending_end_pose_motion_ = end_pose_target_motion;
+        current_motion_ = CreateGentleReferenceMotionTransition(
+            current_motion_,
+            completed_source_frame,
+            end_pose_target_motion,
+            false,
+            "end_transition_motion:");
+        current_frame_ = 0;
+        saved_frame_for_observation_window_ = 0;
+        reinitialize_heading_ = true;
+        operator_state.play = true;
+        ClearMotionGroupPlaybackLocked();
+        std::cout << "[MotionGroup] Group '" << completed_group_name
+                  << "' completed; transitioning to " << end_pose_target << std::endl;
+        return true;
+      }
+
       operator_state.play = false;
-      current_frame_ = std::max(0, current_motion_->timesteps - 1);
+      current_frame_ = 0;
+      reinitialize_heading_ = true;
       std::cout << "[MotionGroup] Group '" << playback_group_name_
-                << "' completed at final frame " << current_frame_ << std::endl;
-      playback_group_active_ = false;
+                << "' completed; no end pose target motion available, reset to frame 0" << std::endl;
+      ClearMotionGroupPlaybackLocked();
       return true;
     }
 
@@ -2721,8 +2934,10 @@ class G1Deploy {
       motion_catalog_path_ = motion_catalog_path;
       motion_reload_flag_path_ = std::filesystem::path(motion_data_path_) / ".motion_reload_request";
       motion_playback_request_path_ = std::filesystem::path(motion_data_path_) / ".motion_playback_request.json";
+      playback_settings_path_ = std::filesystem::path(motion_data_path_) / ".playback_settings.json";
       sonic_status_file_path_ = std::filesystem::path(motion_data_path_) / ".sonic_status.json";
       PrimeExistingMotionPlaybackRequest();
+      ApplyPlaybackSettings(true);
       last_motion_reload_check_ = std::chrono::steady_clock::now();
       std::error_code reload_flag_error;
       if (std::filesystem::exists(motion_reload_flag_path_, reload_flag_error) && !reload_flag_error) {
@@ -2814,6 +3029,7 @@ class G1Deploy {
             current_motion_ = motion_reader_.GetMotionShared(motion_reader_.current_motion_index_);
             current_frame_ = 0;
             motion_name = current_motion_->name;
+            initial_standing_motion_ = CreateInitialStandingMotion(current_motion_);
           }
           operator_state.play = false;
           std::cout << "Started with motion: " << motion_name << " (paused at frame 0)" << std::endl;
@@ -3924,22 +4140,63 @@ class G1Deploy {
         // Check if motion completed (reached the end)
         if (current_motion_->name != "streamed") {
           if (current_frame_ >= current_motion_->timesteps) {
-            if (current_motion_ ->name != "temporary_motion") {
+            const std::string completed_motion_name = current_motion_->name;
+            const bool is_temporary_motion = completed_motion_name == "temporary_motion";
+            const bool is_end_transition_motion =
+                completed_motion_name.rfind("end_transition_motion:", 0) == 0;
+
+            if (!is_temporary_motion && !is_end_transition_motion) {
               FootTrajectoryEvent::WriteEvent(
                   "end",
-                  current_motion_->name,
+                  completed_motion_name,
                   motion_reader_.current_motion_index_,
                   current_frame_,
                   current_motion_->timesteps);
               std::cout << "______________________________________________________" << std::endl;
-              std::cout << "Motion index: " << motion_reader_.current_motion_index_ << " : " << current_motion_->name << " completed." << std::endl;
+              std::cout << "Motion index: " << motion_reader_.current_motion_index_ << " : " << completed_motion_name << " completed." << std::endl;
               std::cout << "______________________________________________________" << std::endl;
-            } else {
+            } else if (is_temporary_motion) {
               std::cout << "Temporary motion completed." << std::endl;
             }
             if (AdvanceMotionGroupPlaybackLocked()) {
               return true;
             }
+
+            auto selected_motion = motion_reader_.GetMotionShared(
+                static_cast<size_t>(motion_reader_.current_motion_index_));
+            if (is_end_transition_motion) {
+              if (pending_end_pose_motion_) {
+                current_motion_ = pending_end_pose_motion_;
+              } else if (selected_motion) {
+                current_motion_ = selected_motion;
+              }
+              pending_end_pose_motion_.reset();
+              operator_state.play = false;
+              current_frame_ = 0;
+              reinitialize_heading_ = true;
+              std::cout << "End transition completed. Paused at frame 0." << std::endl;
+              return true;
+            }
+
+            auto end_pose_target_motion = ResolvePlaybackEndPoseTargetMotionLocked(
+                playback_end_pose_target_, motion_reader_.current_motion_index_, "[MotionPlayback]");
+            if (!is_temporary_motion && end_pose_target_motion) {
+              const int completed_source_frame = std::max(0, current_motion_->timesteps - 1);
+              const std::string end_pose_target = playback_end_pose_target_;
+              pending_end_pose_motion_ = end_pose_target_motion;
+              current_motion_ = CreateGentleReferenceMotionTransition(
+                  current_motion_,
+                  completed_source_frame,
+                  end_pose_target_motion,
+                  false,
+                  "end_transition_motion:");
+              current_frame_ = 0;
+              reinitialize_heading_ = true;
+              operator_state.play = true;
+              std::cout << "Starting end transition to " << end_pose_target << "." << std::endl;
+              return true;
+            }
+
             operator_state.play = false;
             current_frame_ = 0; // Reset to beginning
             // Total reset: both base quaternion and delta heading
@@ -4029,6 +4286,8 @@ class G1Deploy {
     
      
       bool has_planner = static_cast<bool>(planner_);
+
+      this->ApplyPlaybackSettings();
       
       if (has_planner) {
         input_interface_->handle_input(motion_reader_, current_motion_, current_frame_, operator_state,
