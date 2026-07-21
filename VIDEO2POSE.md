@@ -41,8 +41,9 @@ bash install_scripts/install_gear_sonic_models_offline.sh ./sonic_model.tar.gz
 终端1 开启仿真
 
 ```bash
-source .venv_sim/bin/activate
-python gear_sonic/scripts/run_sim_loop.py
+env -u PYTHONPATH \
+  .venv_sim/bin/python \
+  gear_sonic/scripts/run_sim_loop.py
 ```
 
 终端2 启动 sonic 控制
@@ -151,25 +152,5 @@ select 进入阻尼
 sudo systemctl stop groot-deploy.service
 tmux kill-session -t sonic 2>/dev/null || true
 sudo systemctl start groot-deploy.service
-```
-
-
-
-# 本地开发完同步到机器人
-
-```bash
-GIT_LFS_SKIP_PUSH=1 \
-  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" \
-  git push robot dance
-```
-
-
-
-# 机器人上面执行
-
-```bash
-cd ~/GR00T-WholeBodyControl && \
-  GIT_LFS_SKIP_SMUDGE=1 \
-  git pull robot dance
 ```
 
