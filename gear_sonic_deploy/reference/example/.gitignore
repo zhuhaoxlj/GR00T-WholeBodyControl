@@ -1,0 +1,16 @@
+# Ignore everything in this directory except the official baseline motions.
+/*
+!/.gitignore
+!/dance_in_da_party_001__A464/
+!/dance_in_da_party_001__A464_M/
+!/forward_lunge_R_001__A359_M/
+!/macarena_001__A545/
+!/macarena_001__A545_M/
+!/neutral_kick_R_001__A543/
+!/neutral_kick_R_001__A543_M/
+!/squat_001__A359/
+!/tired_forward_lunge_R_001__A359_M/
+!/tired_one_leg_jumping_R_001__A359/
+!/tired_one_leg_jumping_R_001__A359_M/
+!/walking_quip_360_R_002__A428/
+!/walking_quip_360_R_002__A428_M/
