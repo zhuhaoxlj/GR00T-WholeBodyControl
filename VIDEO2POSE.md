@@ -6,13 +6,13 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-2. 仿真
+1. 仿真
 
 ```bash
 install_scripts/install_mujoco_sim.sh
 ```
 
-3. 下载模型
+1. 下载模型
 
 ```bash
 uv run \
@@ -30,11 +30,41 @@ bash install_scripts/package_gear_sonic_models.sh ./sonic_model.tar.gz
 
 3.2 使用离线模型包
 
+3.2.1 上传模型文件
+
 ```bash
-bash install_scripts/install_gear_sonic_models_offline.sh ./sonic_model.tar.gz
+rsync \
+  -avP \
+  ./sonic_model.tar.gz \
+  etnx:~/gr00t-wholebodycontrol/
 ```
 
+3.2.2 上传安装脚本
+
+```bash
+ssh etnx
+cd ~/gr00t-wholebodycontrol/
+mkdir -p install_scripts
+```
+
+```bash
+rsync \
+  -avP \
+  ./install_scripts/install_gear_sonic_models_offline.sh \
+  etnx:~/gr00t-wholebodycontrol/install_scripts/
+```
+
+3.2.3 安装模型
+
+```bash
+bash ./install_scripts/install_gear_sonic_models_offline.sh ./sonic_model.tar.gz
+```
+
+
+
 # 测试舞蹈
+
+
 
 ## 仿真
 
