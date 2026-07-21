@@ -6,13 +6,13 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-1. 仿真
+2. 仿真
 
 ```bash
 install_scripts/install_mujoco_sim.sh
 ```
 
-1. 下载模型
+3. 下载模型
 
 ```bash
 uv run \
