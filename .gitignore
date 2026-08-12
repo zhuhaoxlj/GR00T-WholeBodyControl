@@ -234,3 +234,6 @@ sonic_model.tar.gz
 GEAR_SONIC_MODELS.sha256
 gear_sonic_deploy/reference/**/.sonic_status.json
 gear_sonic_deploy/reference/**/.motion_reload_request
+
+# Graphify local output (generated knowledge graphs, not source)
+graphify-out/
